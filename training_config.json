@@ -1,0 +1,165 @@
+{
+  "settings": {
+    "max_parallel_per_gpu": 2,
+    "log_dir": "smart_parallel_logs",
+    "check_interval": 5
+  },
+  "tasks": [
+    {
+      "model": "Autoformer",
+      "type": "standard",
+      "gpu": 0,
+      "priority": 1
+    },
+    {
+      "model": "iTransformer", 
+      "type": "standard",
+      "gpu": 0,
+      "priority": 1
+    },
+    {
+      "model": "s_mamba",
+      "type": "standard", 
+      "gpu": 1,
+      "priority": 1
+    },
+    {
+      "model": "Autoformer_M",
+      "type": "standard",
+      "gpu": 1,
+      "priority": 1
+    },
+    {
+      "model": "Transformer",
+      "type": "standard",
+      "gpu": 0,
+      "priority": 2
+    },
+    {
+      "model": "Informer",
+      "type": "standard",
+      "gpu": 1,
+      "priority": 2
+    },
+    {
+      "model": "Flashformer",
+      "type": "standard",
+      "gpu": 0,
+      "priority": 2
+    },
+    {
+      "model": "Flowformer",
+      "type": "standard",
+      "gpu": 1,
+      "priority": 2
+    },
+    {
+      "model": "Autoformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "Autoformer_M",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "Flashformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "Flashformer_M",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "Flowformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "Flowformer_M",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "Informer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "Informer_M",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "Reformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "Reformer_M",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "Transformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "Transformer_M",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "iFlashformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "iFlowformer",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "iInformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "iReformer",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    },
+    {
+      "model": "iTransformer",
+      "type": "10x",
+      "gpu": 0,
+      "priority": 3
+    },
+    {
+      "model": "s_mamba",
+      "type": "10x",
+      "gpu": 1,
+      "priority": 3
+    }
+  ]
+} 

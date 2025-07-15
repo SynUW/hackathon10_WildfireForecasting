@@ -1,0 +1,121 @@
+# 数据文件夹 - 屏蔽所有数据相关目录
+/mnt/
+data/
+dataset/
+datasets/
+wildfire_dataset/
+**/wildfire_dataset/
+**/full_datasets/
+**/pixel_samples_merged/
+
+# 模型文件和权重 - 屏蔽训练好的模型文件
+*.pth
+*.pt
+*.ckpt
+*.model
+/pths/
+**/pths/
+model_weights/
+checkpoints/
+saved_models/
+
+# 缓存文件
+cache/
+**/cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 日志文件
+*.log
+logs/
+**/logs/
+wandb/
+**/wandb/
+
+# 结果文件
+results/
+**/results/
+outputs/
+**/outputs/
+predictions/
+**/predictions/
+visualizations/
+**/visualizations/
+
+# 临时文件
+*.tmp
+*.temp
+temp/
+tmp/
+
+# IDE和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 环境文件
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 配置文件（可能包含敏感信息）
+config.ini
+config.yaml
+*.cfg
+
+# HDF5数据文件
+*.h5
+*.hdf5
+*.hdf
+
+# 图像文件（如果很大的话）
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+
+# CSV结果文件（如果很大的话）
+# *.csv  # 取消注释这行如果不想上传CSV结果
+
+# 测试文件
+test_*.py
+debug_*.py
+*_test.py
+*_debug.py 
