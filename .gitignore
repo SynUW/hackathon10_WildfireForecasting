@@ -42,6 +42,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+trash/
 
 # 日志文件
 *.log
