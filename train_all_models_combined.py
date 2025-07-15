@@ -1686,7 +1686,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             
             # 🔥 修改：不删除第0个通道，而是将其数据置零，保持39个通道的完整性
             # past[:, 0, :] = 0.0  # 将第0个通道（FIRMS）置零，而不是删除
-            
+                        
             if firms_normalizer is not None:
                 past, future = normalize_batch(past, future, firms_normalizer, metadata_list)
             
