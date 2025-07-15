@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 import math
 
-# from mamba_ssm import Mamba  # 不需要，这个文件没有使用Mamba
+# from mamba_ssm import Mamba  # Not needed, this file doesn't use Mamba
 class PositionalEmbedding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super(PositionalEmbedding, self).__init__()

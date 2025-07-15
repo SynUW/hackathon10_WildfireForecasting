@@ -20,9 +20,9 @@ class Model(nn.Module):
         
         self.embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq, configs.dropout)
 
-        # 确保d_state在合理范围内，避免内存问题
+        # Ensure d_state is within reasonable range to avoid memory issues
         d_state = getattr(configs, 'd_state', 16)
-        d_state = min(d_state, 64)  # 限制最大d_state，避免内存过大
+        d_state = min(d_state, 64)  # Limit maximum d_state to avoid excessive memory usage
         
         self.mamba = Mamba(
             d_model = configs.d_model,

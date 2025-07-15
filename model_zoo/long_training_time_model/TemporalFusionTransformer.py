@@ -305,5 +305,5 @@ class Model(nn.Module):
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)  # [B,pred_len,C]
-            return dec_out  # [B, pred_len, C] - 直接返回预测结果
+            return dec_out  # [B, pred_len, C] - directly return prediction results
         return None

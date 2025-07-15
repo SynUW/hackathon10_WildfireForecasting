@@ -5,7 +5,7 @@ import numpy as np
 from scipy import signal
 from scipy import special as ss
 
-# device将在运行时动态确定，不在此处硬编码
+# device will be determined dynamically at runtime, not hardcoded here
 
 
 def transition(N):

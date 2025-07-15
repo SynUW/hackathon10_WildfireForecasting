@@ -6,7 +6,7 @@ import torch.nn as nn
 import os
 import sys
 
-# 添加项目根目录到 Python 路径
+# Add project root directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
@@ -22,24 +22,24 @@ from mamba_ssm import Mamba
 class Configs:
     def __init__(self, seq_len=10, pred_len=7, d_model=256, d_state=256, d_ff=2048, 
                  e_layers=5, dropout=0.1, activation='relu', output_attention=False,
-                 use_norm=True, embed='timeF', freq='d'):
-        # 模型基本参数
-        self.seq_len = seq_len  # 输入序列长度
-        self.pred_len = pred_len  # 预测长度
-        self.d_model = d_model  # 模型维度
-        self.d_state = d_state  # SSM状态扩展因子
-        self.d_ff = d_ff   # 前馈网络维度
+                 use_norm=False, embed='timeF', freq='d'):
+        # Model basic parameters
+        self.seq_len = seq_len  # Input sequence length
+        self.pred_len = pred_len  # Prediction length
+        self.d_model = d_model  # Model dimension
+        self.d_state = d_state  # SSM state expansion factor
+        self.d_ff = d_ff   # Feed-forward network dimension
         
-        # 模型结构参数
-        self.e_layers = e_layers  # 编码器层数
-        self.dropout = dropout  # dropout率
-        self.activation = activation  # 激活函数
+        # Model structure parameters
+        self.e_layers = e_layers  # Number of encoder layers
+        self.dropout = dropout  # Dropout rate
+        self.activation = activation  # Activation function
         
-        # 其他参数
-        self.output_attention = output_attention  # 是否输出注意力权重
-        self.use_norm = use_norm  # 是否使用归一化
-        self.embed = embed  # 嵌入类型
-        self.freq = freq  # 频率
+        # Other parameters
+        self.output_attention = output_attention  # Whether to output attention weights
+        self.use_norm = use_norm  # Whether to use normalization
+        self.embed = embed  # Embedding type
+        self.freq = freq  # Frequency
 
 class Model(nn.Module):
     """
@@ -52,7 +52,7 @@ class Model(nn.Module):
         self.pred_len = configs.pred_len
         self.output_attention = configs.output_attention
         self.use_norm = configs.use_norm
-        # Embedding - 第一个参数应该是序列长度
+        # Embedding - first parameter should be sequence length
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
                                                     configs.dropout)
         # Encoder-only architecture
@@ -97,10 +97,23 @@ class Model(nn.Module):
     def forecast(self, x_enc, x_mark_enc):
         if self.use_norm:
             # Normalization from Non-stationary Transformer
+            """
+            mask = (x_enc != 0).float() # mask out the zero (ignore) values
             means = x_enc.mean(1, keepdim=True).detach()
             x_enc = x_enc - means
             stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
             x_enc /= stdev
+            """
+            valid_mask = torch.ones_like(x_enc)
+            valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+            
+            eps = 1e-8
+            valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+            means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            stdev = torch.sqrt(variances + eps)
+            x_enc = ((x_enc - means) / stdev) * valid_mask
+
 
         _, _, N = x_enc.shape # B L N
         # B: batch_size;    E: d_model; 
@@ -126,48 +139,48 @@ class Model(nn.Module):
 
 
     def forward(self, x_enc, target_date, mask=None):
-        # x_enc: [B, L, D] 其中 L=10 表示前10天的数据
-        # target_date: [B] 格式为 yyyymmdd 的日期字符串列表
+        # x_enc: [B, L, D] where L=10 represents data from the previous 10 days
+        # target_date: [B] list of date strings in yyyymmdd format
         
         batch_size, seq_len, _ = x_enc.shape
-        device = x_enc.device  # 获取输入张量的设备
+        device = x_enc.device  # Get the device of input tensor
         
-        # 创建时间编码
+        # Create time encodings
         time_encodings = []
         for date_str in target_date:
-            # 解析日期
+            # Parse date
             year = int(str(date_str)[:4])
             month = int(str(date_str)[4:6])
             day = int(str(date_str)[6:8])
             
-            # 计算星期几 (0-6, 0表示星期一)
+            # Calculate weekday (0-6, 0 represents Monday)
             weekday = datetime.datetime(year, month, day).weekday()
             
-            # 计算一年中的第几天 (1-366)
+            # Calculate day of year (1-366)
             day_of_year = datetime.datetime(year, month, day).timetuple().tm_yday
             
-            # 创建时间编码
-            # 1. 月份编码 (1-12)
+            # Create time encodings
+            # 1. Month encoding (1-12)
             month_sin = torch.sin(torch.tensor(2 * np.pi * month / 12, device=device))
             month_cos = torch.cos(torch.tensor(2 * np.pi * month / 12, device=device))
             
-            # 2. 星期编码 (0-6)
+            # 2. Weekday encoding (0-6)
             weekday_sin = torch.sin(torch.tensor(2 * np.pi * weekday / 7, device=device))
             weekday_cos = torch.cos(torch.tensor(2 * np.pi * weekday / 7, device=device))
             
-            # 3. 一年中的第几天编码 (1-366)
+            # 3. Day of year encoding (1-366)
             day_sin = torch.sin(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
             day_cos = torch.cos(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
             
-            # 组合时间特征
+            # Combine time features
             time_encoding = torch.tensor([month_sin, month_cos, 
                                         weekday_sin, weekday_cos,
                                         day_sin, day_cos], device=device)
             time_encodings.append(time_encoding)
         
-        # 将时间编码转换为张量 [B, 6]
+        # Convert time encodings to tensor [B, 6]
         x_mark_enc = torch.stack(time_encodings)
-        # 扩展维度以匹配序列长度 [B, L, 6]
+        # Expand dimensions to match sequence length [B, L, 6]
         x_mark_enc = x_mark_enc.unsqueeze(1).repeat(1, seq_len, 1)
         
         dec_out = self.forecast(x_enc, x_mark_enc)
@@ -184,17 +197,16 @@ if __name__ == '__main__':
     e_layers=2,
     dropout=0.1,
 )
-    # 创建配
-    # 创建模型并移动到 GPU
+    # Create model and move to GPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = Model(configs).to(device)
     
-    # 测试数据
+    # Test data
     batch_size = 32
     x_enc = torch.randn(batch_size, configs.seq_len, configs.d_model).to(device)  # [32, 10, 39]
-    target_date = ['20010829'] * batch_size  # 示例日期
+    target_date = ['20010829'] * batch_size  # Example date
     
-    # 前向传播测试
+    # Forward propagation test
     output = model(x_enc, target_date)
     print(f"Input shape: {x_enc.shape}")
     print(f"Output shape: {output.shape}")

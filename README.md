@@ -47,6 +47,7 @@ pip install mamba-ssm
   ```
 
 ### 2.2 Data File Naming and Content
+- Data can be found at Google Drive: https://drive.google.com/drive/u/1/folders/1VcZnj0DW2pTUf08mGLluE9l-HLTSsYDx
 - File name format: `{year}_year_dataset.h5`, e.g. `2020_year_dataset.h5`
 - Each file contains all pixels' multi-channel data for the whole year
 - Dataset name: `{row}_{col}`, e.g. `37_255`
@@ -62,28 +63,19 @@ pip install mamba-ssm
 ```bash
 # Train a specific model
 python train_single_model.py --model DLinear --model-type standard
-python train_single_model.py --model Mamba --model-type 10x
 
 # List available models
 python train_single_model.py --list-models
 ```
 - Suitable for testing or debugging a single model
-- Supports both standard and 10x model types
 
 ### 3.2 Sequential Batch Training
 ```bash
 # Train all standard models (sequential)
-python train_all_models_combined.py --skip-10x --force-retrain
-
-# Train all 10x models
-python train_all_models_combined.py --only-10x --force-retrain
-
-# Train all models (standard + 10x)
 python train_all_models_combined.py --force-retrain
 ```
 - Automatically trains all models, covering all mainstream time series architectures
 - Standard model results are saved in `/mnt/raid/zhengsen/pths/7to1_Focal_woFirms_onlyFirmsLoss_newloadertest/`
-- 10x model results are saved in `/mnt/raid/zhengsen/pths/model_pth_20epoch_MSE_10x/`
 
 ### 3.3 Parallel Training (Recommended)
 ```bash
@@ -126,7 +118,7 @@ python smart_parallel.py --max-parallel-per-gpu 2
 python test_and_visualize_optimized.py --model DLinear --model-type standard
 
 # Visualize and compare multiple models
-python test_and_visualize_optimized.py --model Mamba --model-type 10x --save-comparison
+python test_and_visualize_optimized.py --model Mamba --model-type standard --save-comparison
 
 # Generate prediction results for specific time windows
 python test_and_visualize_optimized.py --model iTransformer --window-range 1-10

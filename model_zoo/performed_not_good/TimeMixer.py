@@ -196,10 +196,10 @@ class Model(nn.Module):
         self.down_sampling_window = configs.down_sampling_window
         self.channel_independence = configs.channel_independence
         
-        # 设置缺失的属性
+        # Set missing attributes
         self.layer = configs.e_layers
         
-        # 设置默认值
+        # Set default values
         if not hasattr(configs, 'down_sampling_method'):
             configs.down_sampling_method = 'avg'
         if not hasattr(configs, 'use_norm'):

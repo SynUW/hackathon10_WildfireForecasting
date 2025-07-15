@@ -56,9 +56,9 @@ class Model(nn.Module):
         with torch.no_grad():
             if self.training:
                 x_enc = self.transform.transform(x_enc)
-        # 确保时间特征维度正确匹配频率要求
+        # Ensure time feature dimensions correctly match frequency requirements
         if x_mark_enc is not None and x_mark_enc.size(-1) > 3:
-            x_mark_enc = x_mark_enc[:, :, :3]  # 对于'd'频率，只需要3维
+            x_mark_enc = x_mark_enc[:, :, :3]  # For 'd' frequency, only need 3 dimensions
         res = self.enc_embedding(x_enc, x_mark_enc)
         level, growths, seasons = self.encoder(res, x_enc, attn_mask=None)
 
@@ -81,9 +81,9 @@ class Model(nn.Module):
         return preds
 
     def classification(self, x_enc, x_mark_enc):
-        # 确保时间特征维度正确匹配频率要求
+        # Ensure time feature dimensions correctly match frequency requirements
         if x_mark_enc is not None and x_mark_enc.size(-1) > 3:
-            x_mark_enc = x_mark_enc[:, :, :3]  # 对于'd'频率，只需要3维
+            x_mark_enc = x_mark_enc[:, :, :3]  # For 'd' frequency, only need 3 dimensions
         res = self.enc_embedding(x_enc, x_mark_enc)
         _, growths, seasons = self.encoder(res, x_enc, attn_mask=None)
 

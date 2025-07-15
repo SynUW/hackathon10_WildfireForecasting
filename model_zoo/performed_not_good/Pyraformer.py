@@ -37,11 +37,11 @@ class Model(nn.Module):
 
     def long_forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         enc_out = self.encoder(x_enc, x_mark_enc)
-        # 安全地获取最后一个时间步的输出
+        # Safely get the output of the last time step
         if enc_out.size(1) > 0:
             enc_out = enc_out[:, -1, :]
         else:
-            # 如果序列长度为0，使用平均池化
+            # If sequence length is 0, use average pooling
             enc_out = enc_out.mean(dim=1)
         dec_out = self.projection(enc_out).view(
             enc_out.size(0), self.pred_len, -1)
@@ -55,11 +55,11 @@ class Model(nn.Module):
         x_enc = x_enc / std_enc
 
         enc_out = self.encoder(x_enc, x_mark_enc)
-        # 安全地获取最后一个时间步的输出
+        # Safely get the output of the last time step
         if enc_out.size(1) > 0:
             enc_out = enc_out[:, -1, :]
         else:
-            # 如果序列长度为0，使用平均池化
+            # If sequence length is 0, use average pooling
             enc_out = enc_out.mean(dim=1)
         dec_out = self.projection(enc_out).view(
             enc_out.size(0), self.pred_len, -1)

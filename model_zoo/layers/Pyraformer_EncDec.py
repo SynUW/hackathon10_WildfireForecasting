@@ -13,7 +13,7 @@ def get_mask(input_size, window_size, inner_size):
     all_size = []
     all_size.append(input_size)
     for i in range(len(window_size)):
-        layer_size = max(1, math.floor(all_size[i] / window_size[i]))  # 确保至少为1
+        layer_size = max(1, math.floor(all_size[i] / window_size[i]))  # Ensure at least 1
         all_size.append(layer_size)
 
     seq_length = sum(all_size)
@@ -39,7 +39,7 @@ def get_mask(input_size, window_size, inner_size):
             else:
                 right_side = (
                     start - all_size[layer_idx - 1]) + (i - start + 1) * window_size[layer_idx - 1]
-            # 添加边界检查
+            # Add boundary check
             left_side = max(0, left_side)
             right_side = min(seq_length, right_side)
             if left_side < right_side and i < seq_length:
@@ -62,9 +62,9 @@ def refer_points(all_sizes, window_size):
         for j in range(1, len(all_sizes)):
             start = sum(all_sizes[:j])
             inner_layer_idx = former_index - (start - all_sizes[j - 1])
-            # 添加边界检查
+            # Add boundary check
             layer_idx = min(inner_layer_idx // window_size[j - 1], all_sizes[j] - 1)
-            layer_idx = max(0, layer_idx)  # 确保不为负数
+            layer_idx = max(0, layer_idx)  # Ensure not negative
             former_index = start + layer_idx
             indexes[i][j] = former_index
 

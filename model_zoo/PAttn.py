@@ -14,17 +14,17 @@ class Model(nn.Module):
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
         
-        # 根据序列长度自动调整patch_size和stride
+        # Automatically adjust patch_size and stride based on sequence length
         if self.seq_len <= 7:
-            # 对于短序列，使用更小的patch_size
+            # For short sequences, use smaller patch_size
             self.patch_size = min(4, self.seq_len)
             self.stride = max(1, self.patch_size // 2)
         elif self.seq_len <= 15:
-            # 对于中等序列，使用适中的patch_size
+            # For medium sequences, use moderate patch_size
             self.patch_size = min(8, self.seq_len)
             self.stride = max(1, self.patch_size // 2)
         else:
-            # 对于长序列，使用默认参数
+            # For long sequences, use default parameters
             self.patch_size = patch_len 
             self.stride = stride
         

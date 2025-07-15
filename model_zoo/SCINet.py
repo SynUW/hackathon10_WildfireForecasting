@@ -21,7 +21,7 @@ class Splitting(nn.Module):
 class CausalConvBlock(nn.Module):
     def __init__(self, d_model, kernel_size=5, dropout=0.0):
         super(CausalConvBlock, self).__init__()
-        # 动态调整kernel_size以适应短序列
+        # Dynamically adjust kernel_size to adapt to short sequences
         self.original_kernel_size = kernel_size
         module_list = [
             nn.ReplicationPad1d((kernel_size - 1, kernel_size - 1)),
@@ -38,13 +38,13 @@ class CausalConvBlock(nn.Module):
         self.causal_conv = nn.Sequential(*module_list)
 
     def forward(self, x):
-        # 检查输入维度，如果太小则跳过卷积
+        # Check input dimensions, skip convolution if too small
         if x.size(-1) == 0:
             return x
         
-        # 如果序列长度小于kernel_size，直接返回原始输入
+        # If sequence length is less than kernel_size, return original input directly
         if x.size(-1) < self.original_kernel_size:
-            # 使用简单的线性变换替代卷积
+            # Use simple linear transformation instead of convolution
             return torch.tanh(x)
         
         return self.causal_conv(x)  # return value is the same as input dimension
@@ -59,17 +59,17 @@ class SCIBlock(nn.Module):
     def forward(self, x):
         x_even, x_odd = self.splitting(x)
         
-        # 检查分离后的维度
+        # Check dimensions after splitting
         if x_even.size(1) == 0 or x_odd.size(1) == 0:
-            # 如果任一部分为空，返回原始输入
+            # If any part is empty, return original input
             return x, x
         
         x_even = x_even.permute(0, 2, 1)
         x_odd = x_odd.permute(0, 2, 1)
 
-        # 检查permute后的维度
+        # Check dimensions after permute
         if x_even.size(-1) == 0 or x_odd.size(-1) == 0:
-            # 如果维度为0，返回原始的x分割
+            # If dimension is 0, return original x split
             return x_even.permute(0, 2, 1), x_odd.permute(0, 2, 1)
 
         x_even_temp = x_even.mul(torch.exp(self.modules_even(x_odd)))
@@ -92,7 +92,7 @@ class SCINet(nn.Module):
             self.SCINet_Tree_even = SCINet(d_model, current_level-1, kernel_size, dropout)
 
     def forward(self, x):
-        # 对于非常短的序列，直接返回
+        # For very short sequences, return directly
         if x.size(1) <= 2:
             return x
             
@@ -133,15 +133,15 @@ class Model(nn.Module):
         self.label_len = configs.label_len
         self.pred_len = configs.pred_len
 
-        # 根据序列长度调整SCINet的层数
+        # Adjust SCINet layers based on sequence length
         if self.seq_len <= 7:
-            # 对于短序列，使用更少的层数
+            # For short sequences, use fewer layers
             max_levels = 1
         elif self.seq_len <= 15:
-            # 对于中等序列，使用适中的层数
+            # For medium sequences, use moderate layers
             max_levels = 2
         else:
-            # 对于长序列，使用默认层数
+            # For long sequences, use default layers
             max_levels = 3
 
         # You can set the number of SCINet stacks by argument "d_layers", but should choose 1 or 2.
@@ -175,7 +175,7 @@ class Model(nn.Module):
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)  # [B, seq_len+pred_len, C]
-            # 只返回预测部分，即最后pred_len个时间步
+            # Only return prediction part, i.e., the last pred_len time steps
             return dec_out[:, -self.pred_len:, :]  # [B, pred_len, C]
         return None
 

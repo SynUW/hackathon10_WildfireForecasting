@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-野火预测模型全面对比实验 - 统一版本
-先训练测试model_zoo中的所有模型，再训练测试model_zoo_10x中的所有10倍参数模型
-支持early stopping、F1评价指标、最佳模型测试和CSV结果导出
+Comprehensive Wildfire Forecasting Model Benchmark - Unified Version
+Supports early stopping, F1 evaluation metric, best model testing, and CSV result export
 """
 
 from dataload_year import TimeSeriesDataLoader, TimeSeriesPixelDataset, FullDatasetLoader
@@ -41,7 +40,6 @@ warnings.filterwarnings("ignore")
 # =============================================================================
 
 # 全局训练配置 - 统一管理所有训练相关参数
-ENABLE_10X_TRAINING = True        # 是否训练10x模型的全局开关
 WANDB_ENABLED = True               # 是否启用WandB监控
 GLOBAL_SEED = 42                   # 全局随机种子
 DEFAULT_PATIENCE = 20              # 默认early stopping patience
@@ -65,13 +63,11 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # 模型目录配置
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() 别忘了把这2行消掉
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_Focal_woFirms_onlyFirmsLoss_newloadertest'  
-MODEL_10X_DIR = '/mnt/raid/zhengsen/pths/model_pth_20epoch_MSE_10x'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_Focal_withFirms_onlyFirmsLoss'
 
 def print_config_status():
     """打印当前配置状态"""
     print("📋 当前训练配置:")
-    print(f"   10x模型训练: {'✅ 启用' if ENABLE_10X_TRAINING else '❌ 禁用'}")
     print(f"   WandB监控: {'✅ 启用' if WANDB_ENABLED else '❌ 禁用'}")
     print(f"   随机种子: {GLOBAL_SEED}")
     print(f"   默认并行数: {DEFAULT_MAX_PARALLEL_PER_GPU}/GPU")
@@ -184,18 +180,10 @@ def get_all_models(model_zoo_path):
                 model_files.append(model_name)
     return sorted(model_files)
 
-# 获取标准模型和10x模型列表
+# 获取标准模型列表
 MODEL_LIST_STANDARD = get_all_models('model_zoo')
 
-if ENABLE_10X_TRAINING:
-    MODEL_LIST_10X = get_all_models('model_zoo_10x')
-else:
-    MODEL_LIST_10X = []  # 空列表，跳过10x模型训练
-
 print(f"发现标准模型: {MODEL_LIST_STANDARD}")
-print(f"发现10x模型: {MODEL_LIST_10X}")
-if not ENABLE_10X_TRAINING:
-    print("⚠️  10x模型训练已禁用")
 
 # 训练配置
 TRAINING_CONFIG = {
@@ -211,7 +199,7 @@ TRAINING_CONFIG = {
     'standard': {
         'epochs': 20,
         'batch_size': 128,
-        'learning_rate': 5e-5,          # 降低学习率，与10x模型一致
+        'learning_rate': 5e-5,          # 降低学习率
         'weight_decay': 1e-4,
         'T_0': 20,
         'T_mult': 2,
@@ -219,19 +207,6 @@ TRAINING_CONFIG = {
         'max_grad_norm': 0.0,           # 启用梯度裁剪防止梯度爆炸; 0.0表示不裁剪
         'model_save_dir': STANDARD_MODEL_DIR,
     },
-    
-    # 10x模型配置（考虑显存限制）
-    '10x': {
-        'epochs': 20,
-        'batch_size': 128,
-        'learning_rate': 5e-5,
-        'weight_decay': 1e-4,
-        'T_0': 20,
-        'T_mult': 2,
-        'eta_min': 1e-5,
-        'max_grad_norm': 0.0,           # 启用梯度裁剪防止梯度爆炸
-        'model_save_dir': MODEL_10X_DIR,
-    }
 }
 
 # 数据配置
@@ -595,7 +570,7 @@ def load_model(model_name, configs, model_type='standard'):
                 print(f"💡 建议使用 mamba_env 环境: conda activate mamba_env")
                 raise ImportError(f"模型 {model_name} 需要 mamba_ssm 库，请在 mamba_env 环境中运行")
         
-        # 统一使用model_zoo，通过configs中的参数区分标准/10x模型
+        # 统一使用model_zoo
         model_zoo_path = os.path.join(os.getcwd(), 'model_zoo')
         module_name = f'model_zoo.{model_name}'
         
@@ -794,24 +769,14 @@ class Config:
         except Exception as e:
             print(f"⚠️  动态配置导入失败: {e}，使用默认配置")
             # 使用默认配置
-            if model_type == 'standard':
-                self.d_model = 512
-                self.n_heads = 8
-                self.d_ff = 2048
-                self.e_layers = 2
-                self.d_layers = 2
-                self.d_state = 16
-                self.d_conv = 4
-                self.expand = 2
-            else:  # 10x
-                self.d_model = 2048
-                self.n_heads = 32
-                self.d_ff = 2048
-                self.e_layers = 4
-                self.d_layers = 4
-                self.d_state = 32
-                self.d_conv = 8
-                self.expand = 4
+            self.d_model = 512
+            self.n_heads = 8
+            self.d_ff = 2048
+            self.e_layers = 2
+            self.d_layers = 2
+            self.d_state = 16
+            self.d_conv = 4
+            self.expand = 2
             
             # 通用模型参数
             self.dropout = 0.1
@@ -825,7 +790,7 @@ class Config:
             self.factor = 1
             self.moving_avg = 25
             self.channel_independence = False
-            self.use_norm = True
+            self.use_norm = True  #  True by default
             self.distil = True
             self.label_len = 3 if model_name in ['Autoformer', 'Autoformer_M'] else 0
         
@@ -1479,10 +1444,7 @@ def save_structured_results_to_csv(structured_results, model_type):
         return
     
     # 确定保存目录
-    if model_type == 'standard':
-        save_dir = STANDARD_MODEL_DIR
-    else:
-        save_dir = MODEL_10X_DIR
+    save_dir = STANDARD_MODEL_DIR
     
     # 创建保存目录（如果不存在）
     import os
@@ -2167,7 +2129,7 @@ def train_and_test_models(model_list, model_type, device, train_loader, val_load
         print(f"\n⚠️  失败的模型: {failed_models}")
     
     print("\n📁 所有模型已保存到相应目录中")
-    save_dir = STANDARD_MODEL_DIR if model_type == 'standard' else MODEL_10X_DIR
+    save_dir = STANDARD_MODEL_DIR
     print(f"📊 测试结果已保存到目录: {save_dir}")
     
     return structured_results
@@ -2213,13 +2175,10 @@ def prepare_data_loaders():
     return train_dataset, val_dataset, test_dataset, data_loader
 
 def main():
-    """主函数 - 依次训练标准模型和10x模型"""
+    """主函数 - 训练标准模型"""
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='野火预测模型训练脚本')
-    parser.add_argument('--skip-10x', action='store_true', 
-                       help='跳过10x模型训练，只训练标准模型')
-    parser.add_argument('--only-10x', action='store_true',
-                       help='只训练10x模型，跳过标准模型')
+    
     parser.add_argument('--force-retrain', action='store_true',
                        help='强制重新训练所有模型，忽略已存在的模型文件')
     
@@ -2300,17 +2259,9 @@ def main():
     print()
     
     # 根据命令行参数决定训练哪些模型
-    train_standard = not args.only_10x
-    train_10x = ENABLE_10X_TRAINING and not args.skip_10x
+    train_standard = True
     
-    if args.skip_10x:
-        print("📋 已选择跳过10x模型训练")
-        train_10x = False
-    elif args.only_10x:
-        print("📋 已选择只训练10x模型")
-        train_standard = False
-    
-    print(f"📋 训练计划: 标准模型={'✅' if train_standard else '❌'}, 10x模型={'✅' if train_10x else '❌'}")
+    print("📋 训练计划: 标准模型 ✅")
     if args.force_retrain:
         print("🔄 强制重新训练模式已启用，将忽略已存在的模型文件")
     
@@ -2388,31 +2339,7 @@ def main():
         )
         all_results['standard'] = standard_results
     
-    # ========== 第二阶段：训练10x模型 ==========
-    if train_10x and MODEL_LIST_10X:
-        print(f"\n{'='*80}")
-        print("🚀 第二阶段：训练10x参数model_zoo_10x模型")
-        print(f"{'='*80}")
-        
-        # 创建10x模型数据加载器（较小batch size）
-        config_10x = TRAINING_CONFIG['10x']
-        train_loader_10x = DataLoader(
-            train_dataset, batch_size=config_10x['batch_size'], shuffle=True, 
-            num_workers=6, collate_fn=data_loader_obj.dataset.custom_collate_fn, worker_init_fn=worker_init_fn
-        )
-        val_loader_10x = DataLoader(
-            val_dataset, batch_size=config_10x['batch_size'], shuffle=False,
-            num_workers=4, collate_fn=data_loader_obj.dataset.custom_collate_fn, worker_init_fn=worker_init_fn
-        )
-        test_loader_10x = DataLoader(
-            test_dataset, batch_size=config_10x['batch_size'], shuffle=False,
-            num_workers=4, collate_fn=data_loader_obj.dataset.custom_collate_fn, worker_init_fn=worker_init_fn
-        )
-        
-        results_10x = train_and_test_models(
-            MODEL_LIST_10X, '10x', device, train_loader_10x, val_loader_10x, test_loader_10x, firms_normalizer, args.force_retrain
-        )
-        all_results['10x'] = results_10x
+
     
     # ========== 最终总结 ==========
     print(f"\n{'='*80}")
