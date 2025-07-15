@@ -63,7 +63,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # 模型目录配置
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() 别忘了把这2行消掉
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_Focal_withFirms_onlyFirmsLoss'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_Focal_withFirms_onlyFirmsLoss_normalized_mamba'
 
 def print_config_status():
     """打印当前配置状态"""
