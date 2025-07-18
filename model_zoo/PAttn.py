@@ -50,11 +50,21 @@ class Model(nn.Module):
         self.out_layer = nn.Linear(self.d_model * self.patch_num, configs.pred_len)
             
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-        means = x_enc.mean(1, keepdim=True).detach()
-        x_enc = x_enc - means
-        stdev = torch.sqrt(
-            torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-        x_enc /= stdev
+        # means = x_enc.mean(1, keepdim=True).detach()
+        # x_enc = x_enc - means
+        # stdev = torch.sqrt(
+        #     torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
+        # x_enc /= stdev
+        
+        valid_mask = torch.ones_like(x_enc)
+        valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+        
+        eps = 1e-8
+        valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+        means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        stdev = torch.sqrt(variances + eps)
+        x_enc = ((x_enc - means) / stdev) * valid_mask
         
         B, _, C = x_enc.shape
         x_enc = x_enc.permute(0, 2, 1)

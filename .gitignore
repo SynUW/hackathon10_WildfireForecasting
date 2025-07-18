@@ -119,4 +119,5 @@ config.yaml
 test_*.py
 debug_*.py
 *_test.py
-*_debug.py 
+*_debug.py
+raster_to_points.py
