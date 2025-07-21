@@ -21,7 +21,7 @@ class Model(nn.Module):
         self.output_attention = configs.output_attention
         # Embedding
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
-                                                    configs.dropout)
+                                                    configs.dropout, time_feat_dim=3)
         # Encoder-only architecture
         self.encoder = Encoder(
             [

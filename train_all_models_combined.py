@@ -1660,7 +1660,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             # target = (target > config.binarization_threshold).float()
             
             # Forward propagation
-            if model_name == 's_mamba':
+            if model_name == 's_mamba' or model_name == 's_mamba_full':
                 past_transposed = past.transpose(1, 2)
                 past_truncated = past_transposed[:, -config.seq_len:, :]
                 
@@ -1729,7 +1729,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
                 target = future_truncated[:, :, 0]  # If this is single-channel prediction for focal loss, use [:, :, 0]
                 # target = (target > config.binarization_threshold).float()
                 
-                if model_name == 's_mamba':
+                if model_name == 's_mamba' or model_name == 's_mamba_full':
                     past_transposed = past.transpose(1, 2)
                     past_truncated = past_transposed[:, -config.seq_len:, :]
                     output = model(past_truncated, date_strings)
@@ -1884,7 +1884,7 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
         print(f"🔍 Multi-task Focal Loss configuration for testing:")
         print(f"   FIRMS weight: {config.firms_weight}, other drivers weight: {config.other_drivers_weight}")
         print(f"   Focal α: {config.focal_alpha}, Focal γ: {config.focal_gamma}")
-        print(f"   回归损失: {config.loss_function}, 忽略0值: {config.ignore_zero_values}")
+        print(f"   Regression loss: {config.loss_function}, Ignore zero values: {config.ignore_zero_values}")
         
     elif config.loss_type == 'kldiv':
         # Create multi-task KL divergence loss function for testing
@@ -1953,7 +1953,7 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
             target = future_truncated[:, :, 0]  # If this is single-channel prediction for focal loss, use [:, :, 0]
             # target = (target > config.binarization_threshold).float()
             
-            if model_name == 's_mamba':
+            if model_name == 's_mamba' or model_name == 's_mamba_full':
                 past_transposed = past.transpose(1, 2)
                 past_truncated = past_transposed[:, -config.seq_len:, :]
                 output = model(past_truncated, date_strings)

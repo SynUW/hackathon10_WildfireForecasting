@@ -20,7 +20,7 @@ class Model(nn.Module):
         self.use_norm = configs.use_norm
         # Embedding
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
-                                                    configs.dropout)
+                                                    configs.dropout, time_feat_dim=3)
         self.class_strategy = configs.class_strategy
         # Encoder-only architecture
         self.encoder = Encoder(

@@ -1,6 +1,11 @@
 """
 Is Mamba Effective for Time Series Forecasting?
 Standalone version - All dependencies included
+
+ToDo:
+- [ ] more effective time embedding
+- [ ] MOE
+- [ ] Bayesian Mamba
 """
 import torch
 import torch.nn as nn
@@ -161,7 +166,7 @@ class Model(nn.Module):
                 configs.d_ff,
                 dropout=configs.dropout,
                 activation=configs.activation
-            ) for l in range(configs.e_layers)
+            ) for _ in range(configs.e_layers)
         ]
             
         self.encoder = Encoder(
