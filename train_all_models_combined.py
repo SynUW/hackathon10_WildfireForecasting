@@ -41,7 +41,7 @@ warnings.filterwarnings("ignore")
 
 # Global training configuration - unified management of all training-related parameters
 # Whether to enable WandB monitoring
-WANDB_ENABLED = True               # Whether to enable WandB monitoring
+WANDB_ENABLED = False               # Whether to enable WandB monitoring
 GLOBAL_SEED = 42                   # Global random seed
 DEFAULT_PATIENCE = 20              # Default early stopping patience
 DEFAULT_MAX_PARALLEL_PER_GPU = 2   # Default maximum parallel tasks per GPU
@@ -1653,22 +1653,23 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             if firms_normalizer is not None:
                 past, future = normalize_batch(past, future, firms_normalizer, metadata_list)
             
-            date_strings = [str(int(metadata[0])) for metadata in metadata_list]
+            date_strings = [str(int(metadata[0])) for metadata in metadata_list]  # B 1, yyyymmdd
             
             future_truncated = future[:, :, :config.pred_len].transpose(1, 2)
             target = future_truncated[:, :, 0]  # If this is single-channel prediction for focal loss, use [:, :, 0]
             # target = (target > config.binarization_threshold).float()
             
             # Forward propagation
-            if model_name == 's_mamba' or model_name == 's_mamba_full':
-                past_transposed = past.transpose(1, 2)
-                past_truncated = past_transposed[:, -config.seq_len:, :]
+            # if model_name == 's_mamba':
+            #     past_transposed = past.transpose(1, 2)
+            #     past_truncated = past_transposed[:, -config.seq_len:, :]
                 
-                output = model(past_truncated, date_strings)
-            else:
-                x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
-                x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
-                output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)  # B T C
+            #     output = model(past_truncated, date_strings)
+            # else:
+            # x_mark_enc: B T 7 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos)
+            x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
+            x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
+            output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)  # B T C
                         
             # Multi-task learning: Predict all 39 channels
             # output shape: (B, T, C) where C=39
@@ -1729,14 +1730,16 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
                 target = future_truncated[:, :, 0]  # If this is single-channel prediction for focal loss, use [:, :, 0]
                 # target = (target > config.binarization_threshold).float()
                 
-                if model_name == 's_mamba' or model_name == 's_mamba_full':
-                    past_transposed = past.transpose(1, 2)
-                    past_truncated = past_transposed[:, -config.seq_len:, :]
-                    output = model(past_truncated, date_strings)
-                else:
-                    x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
-                    x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
-                    output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
+                # if model_name == 's_mamba':
+                #     past_transposed = past.transpose(1, 2)
+                #     past_truncated = past_transposed[:, -config.seq_len:, :]
+                #     output = model(past_truncated, date_strings)
+                # else:
+                
+                # x_mark_enc: B T 5 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_norm)
+                x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
+                x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
+                output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
                 
                 # Multi-task learning: Predict all 39 channels
                 target_all_channels = future_truncated  # Use all channels as target
@@ -1953,14 +1956,15 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
             target = future_truncated[:, :, 0]  # If this is single-channel prediction for focal loss, use [:, :, 0]
             # target = (target > config.binarization_threshold).float()
             
-            if model_name == 's_mamba' or model_name == 's_mamba_full':
-                past_transposed = past.transpose(1, 2)
-                past_truncated = past_transposed[:, -config.seq_len:, :]
-                output = model(past_truncated, date_strings)
-            else:
-                x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
-                x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
-                output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
+            # if model_name == 's_mamba':
+            #     past_transposed = past.transpose(1, 2)
+            #     past_truncated = past_transposed[:, -config.seq_len:, :]
+            #     output = model(past_truncated, date_strings)
+            # else:
+            # x_mark_enc: B T 5 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_norm)
+            x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
+            x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
+            output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
             
             # Multi-task learning: Predict all 39 channels
             target_all_channels = future_truncated  # Use all channels as target

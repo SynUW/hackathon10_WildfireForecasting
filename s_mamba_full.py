@@ -6,6 +6,7 @@ ToDo:
 - [ ] more effective time embedding
 - [ ] MOE
 - [ ] Bayesian Mamba
+- [ ] TimeXer or relevent SOTA models
 """
 import torch
 import torch.nn as nn
@@ -22,7 +23,7 @@ class DataEmbedding_inverted(nn.Module):
 # original: cat(x, x_mark) and then embed
 # modified: embed x and x_mark separately and then cat
 
-    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=6):
+    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=7):
         super(DataEmbedding_inverted, self).__init__()
         self.value_embedding = nn.Linear(c_in, d_model)
         self.time_embedding = nn.Linear(time_feat_dim, d_model)
@@ -144,7 +145,7 @@ class Model(nn.Module):
         
         # Embedding - first parameter should be sequence length
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
-                                                    configs.dropout)
+                                                    configs.dropout, time_feat_dim=7)
         
         # Encoder-only architecture
         # Use Mamba blocks
@@ -212,43 +213,9 @@ class Model(nn.Module):
 
         return dec_out
 
-    def forward(self, x_enc, target_date, mask=None):
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         # x_enc: [B, L, D] where L represents data from the previous L days
-        # target_date: [B] list of date strings in yyyymmdd format
-        
-        batch_size, seq_len, _ = x_enc.shape
-        device = x_enc.device  # Get the device of input tensor
-        
-        # 生成每个样本输入序列的真实日期列表
-        all_time_encodings = []
-        for i, date_str in enumerate(target_date):
-            # 目标日
-            year = int(str(date_str)[:4])
-            month = int(str(date_str)[4:6])
-            day = int(str(date_str)[6:8])
-            target_dt = datetime.datetime(year, month, day)
-            # 输入序列每一天的日期（假设数据是连续的，且target_date为预测日，输入为前seq_len天）
-            input_dates = [target_dt - datetime.timedelta(days=seq_len - j) for j in range(1, seq_len+1)]
-            # 依次编码每一天
-            time_encodings = []
-            for dt in input_dates:
-                # 1. 月份编码
-                month_sin = torch.sin(torch.tensor(2 * np.pi * dt.month / 12, device=device))
-                month_cos = torch.cos(torch.tensor(2 * np.pi * dt.month / 12, device=device))
-                # 2. 星期编码
-                weekday = dt.weekday()
-                weekday_sin = torch.sin(torch.tensor(2 * np.pi * weekday / 7, device=device))
-                weekday_cos = torch.cos(torch.tensor(2 * np.pi * weekday / 7, device=device))
-                # 3. 年内天数编码
-                day_of_year = dt.timetuple().tm_yday
-                day_sin = torch.sin(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
-                day_cos = torch.cos(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
-                time_encoding = torch.tensor([month_sin, month_cos, weekday_sin, weekday_cos, day_sin, day_cos], device=device)
-                time_encodings.append(time_encoding)
-            # [seq_len, 6]
-            all_time_encodings.append(torch.stack(time_encodings))
-        # [B, seq_len, 6]
-        x_mark_enc = torch.stack(all_time_encodings)
+        # x_mark_enc: [B, L, 7] (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos)
         
         dec_out = self.forecast(x_enc, x_mark_enc)
         return dec_out[:, -self.pred_len:, :]  # [B, L, D]

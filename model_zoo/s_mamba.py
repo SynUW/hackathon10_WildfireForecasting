@@ -54,7 +54,7 @@ class Model(nn.Module):
         self.use_norm = configs.use_norm
         # Embedding - first parameter should be sequence length
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
-                                                    configs.dropout, time_feat_dim=6)
+                                                    configs.dropout, time_feat_dim=7)
         # Encoder-only architecture
         self.encoder = Encoder(
             [
@@ -138,50 +138,50 @@ class Model(nn.Module):
         return dec_out
 
 
-    def forward(self, x_enc, target_date, mask=None):
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         # x_enc: [B, L, D] where L=10 represents data from the previous 10 days
         # target_date: [B] list of date strings in yyyymmdd format
         
-        batch_size, seq_len, _ = x_enc.shape
-        device = x_enc.device  # Get the device of input tensor
+        # batch_size, seq_len, _ = x_enc.shape
+        # device = x_enc.device  # Get the device of input tensor
         
-        # Create time encodings
-        time_encodings = []
-        for date_str in target_date:
+        # # Create time encodings
+        # time_encodings = []
+        # for date_str in target_date:
             # Parse date
-            year = int(str(date_str)[:4])
-            month = int(str(date_str)[4:6])
-            day = int(str(date_str)[6:8])
+        #     year = int(str(date_str)[:4])
+        #     month = int(str(date_str)[4:6])
+        # #     day = int(str(date_str)[6:8])
             
-            # Calculate weekday (0-6, 0 represents Monday)
-            weekday = datetime.datetime(year, month, day).weekday()
+        #     # Calculate weekday (0-6, 0 represents Monday)
+        #     weekday = datetime.datetime(year, month, day).weekday()
             
             # Calculate day of year (1-366)
-            day_of_year = datetime.datetime(year, month, day).timetuple().tm_yday
+        #     day_of_year = datetime.datetime(year, month, day).timetuple().tm_yday
             
             # Create time encodings
             # 1. Month encoding (1-12)
-            month_sin = torch.sin(torch.tensor(2 * np.pi * month / 12, device=device))
-            month_cos = torch.cos(torch.tensor(2 * np.pi * month / 12, device=device))
+            # month_sin = torch.sin(torch.tensor(2 * np.pi * month / 12, device=device))
+            # month_cos = torch.cos(torch.tensor(2 * np.pi * month / 12, device=device))
             
             # 2. Weekday encoding (0-6)
-            weekday_sin = torch.sin(torch.tensor(2 * np.pi * weekday / 7, device=device))
-            weekday_cos = torch.cos(torch.tensor(2 * np.pi * weekday / 7, device=device))
+            # weekday_sin = torch.sin(torch.tensor(2 * np.pi * weekday / 7, device=device))
+            # weekday_cos = torch.cos(torch.tensor(2 * np.pi * weekday / 7, device=device))
             
             # 3. Day of year encoding (1-366)
-            day_sin = torch.sin(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
-            day_cos = torch.cos(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
+            # day_sin = torch.sin(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
+            # day_cos = torch.cos(torch.tensor(2 * np.pi * day_of_year / 366, device=device))
             
             # Combine time features
-            time_encoding = torch.tensor([month_sin, month_cos, 
-                                        weekday_sin, weekday_cos,
-                                        day_sin, day_cos], device=device)
-            time_encodings.append(time_encoding)
+            # time_encoding = torch.tensor([month_sin, month_cos, 
+            #                             weekday_sin, weekday_cos,
+            #                             day_sin, day_cos], device=device)
+            # time_encodings.append(time_encoding)
         
         # Convert time encodings to tensor [B, 6]
-        x_mark_enc = torch.stack(time_encodings)
-        # Expand dimensions to match sequence length [B, L, 6]
-        x_mark_enc = x_mark_enc.unsqueeze(1).repeat(1, seq_len, 1)
+        # x_mark_enc = torch.stack(time_encodings)
+        # # Expand dimensions to match sequence length [B, L, 6]
+        # x_mark_enc = x_mark_enc.unsqueeze(1).repeat(1, seq_len, 1)
         
         dec_out = self.forecast(x_enc, x_mark_enc)
         return dec_out[:, -self.pred_len:, :]  # [B, L, D]

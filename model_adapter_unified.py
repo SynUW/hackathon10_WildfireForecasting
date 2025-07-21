@@ -44,29 +44,19 @@ class UnifiedModelAdapter:
         
     def create_time_marks(self, date_strings: List[str], label_len: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Create time feature marks
-        
+        Create time feature marks (归一化+周期化编码+weekday sin/cos)
         Args:
             date_strings: List of date strings, format YYYYMMDD
             label_len: Label length, for some models (e.g., Autoformer)
-            
         Returns:
             x_mark_enc: Encoder time marks (B, seq_len, time_features)
             x_mark_dec: Decoder time marks (B, dec_time_len, time_features)
         """
+        import math
         batch_size = len(date_strings)
-        # Decide the number of time features based on model requirements
-        # Basic 4 features: year, month, day(day of month), weekday
-        # Simplified 3 features: month, day(day of month), weekday (to accommodate more models)
-        if hasattr(self, 'model_name') and self.model_name in ['TimeMixer', 'Pyraformer']:
-            time_features = 4  # Use full 4 features: year, month, day, weekday
-        else:
-            time_features = 3  # Use simplified 3 features: month, day, weekday
-        
-        # Decoder time mark length: standard label_len + pred_len
+        # 新特征数：year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos
+        time_features = 7
         dec_time_len = label_len + self.pred_len
-        
-        # Parse base date (set fixed hour to 12 PM)
         base_dates = []
         for date_str in date_strings:
             try:
@@ -75,95 +65,50 @@ class UnifiedModelAdapter:
                     year = int(date_str[:4])
                     month = int(date_str[4:6])
                     day = int(date_str[6:8])
-                    base_date = datetime(year, month, day, 12, 0, 0)  # Fixed to 12 PM
+                    base_date = datetime(year, month, day, 12, 0, 0)
                 else:
-                    base_date = datetime(2010, 5, 6, 12, 0, 0)  # Default date, 12 PM
+                    base_date = datetime(2010, 5, 6, 12, 0, 0)
             except:
-                base_date = datetime(2010, 5, 6, 12, 0, 0)  # 12 PM
+                base_date = datetime(2010, 5, 6, 12, 0, 0)
             base_dates.append(base_date)
-        
-        # Create encoder time marks (past seq_len days)
+        # Encoder time marks
         x_mark_enc = torch.zeros(batch_size, self.seq_len, time_features)
         for b in range(batch_size):
             base_date = base_dates[b]
             for t in range(self.seq_len):
-                # Calculate date of past day t (from -seq_len+1 to 0)
                 days_offset = t - self.seq_len + 1
                 current_date = base_date + timedelta(days=days_offset)
-                
-                # Extract time features - decide content based on number of time features
-                if time_features == 3:
-                    # 3 features: year, month, day(day of month)
-                    year = current_date.year - 2000   # Relative year (based on 2000)
-                    month = current_date.month - 1    # 0-11
-                    day = current_date.day - 1        # 0-30 (day of month)
-                    
-                    x_mark_enc[b, t, :] = torch.tensor([
-                        year, month, day
-                    ], dtype=torch.long)
-                    
-                elif time_features == 4:
-                    # 4 features: year, month, day(day of month), weekday
-                    year = current_date.year - 2000   # Relative year (based on 2000)
-                    month = current_date.month - 1    # 0-11
-                    day = current_date.day - 1        # 0-30 (day of month)
-                    weekday = current_date.weekday()  # 0-6
-                    
-                    x_mark_enc[b, t, :] = torch.tensor([
-                        year, month, day, weekday
-                    ], dtype=torch.long)
-                    
-                else:
-                    # Keep existing complex feature logic (if other models need it)
-                    month = current_date.month - 1
-                    weekday = current_date.weekday()
-                    day_of_year = current_date.timetuple().tm_yday - 1
-                    
-                    x_mark_enc[b, t, :3] = torch.tensor([
-                        month, weekday, day_of_year
-                    ], dtype=torch.long)
-        
-        # Create decoder time marks (label_len + pred_len days)
+                # 归一化
+                year_norm = (current_date.year - 2000) / 24.0  # 假设最大到2024年
+                # 周期化
+                month_sin = math.sin(2 * math.pi * (current_date.month - 1) / 12)
+                month_cos = math.cos(2 * math.pi * (current_date.month - 1) / 12)
+                day_sin = math.sin(2 * math.pi * (current_date.day - 1) / 31)
+                day_cos = math.cos(2 * math.pi * (current_date.day - 1) / 31)
+                weekday = current_date.weekday()
+                weekday_sin = math.sin(2 * math.pi * weekday / 7)
+                weekday_cos = math.cos(2 * math.pi * weekday / 7)
+                x_mark_enc[b, t, :] = torch.tensor([
+                    year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos
+                ], dtype=torch.float)
+        # Decoder time marks
         x_mark_dec = torch.zeros(batch_size, dec_time_len, time_features)
         for b in range(batch_size):
             base_date = base_dates[b]
             for t in range(dec_time_len):
-                # For Autoformer: the first label_len are historical, the next pred_len are future
-                # Calculate date offset: from (-label_len+1) to pred_len
                 days_offset = t - label_len + 1
                 current_date = base_date + timedelta(days=days_offset)
-                
-                # Extract time features - decide content based on number of time features
-                if time_features == 3:
-                    # 3 features: year, month, day(day of month)
-                    year = current_date.year - 2000   # Relative year (based on 2000)
-                    month = current_date.month - 1    # 0-11
-                    day = current_date.day - 1        # 0-30 (day of month)
-                    
-                    x_mark_dec[b, t, :] = torch.tensor([
-                        year, month, day
-                    ], dtype=torch.long)
-                    
-                elif time_features == 4:
-                    # 4 features: year, month, day(day of month), weekday
-                    year = current_date.year - 2000   # Relative year (based on 2000)
-                    month = current_date.month - 1    # 0-11
-                    day = current_date.day - 1        # 0-30 (day of month)
-                    weekday = current_date.weekday()  # 0-6
-                    
-                    x_mark_dec[b, t, :] = torch.tensor([
-                        year, month, day, weekday
-                    ], dtype=torch.long)
-                    
-                else:
-                    # Keep existing complex feature logic (if other models need it)
-                    month = current_date.month - 1
-                    weekday = current_date.weekday()
-                    day_of_year = current_date.timetuple().tm_yday - 1
-                    
-                    x_mark_dec[b, t, :3] = torch.tensor([
-                        month, weekday, day_of_year
-                    ], dtype=torch.long)
+                year_norm = (current_date.year - 2000) / 24.0
+                month_sin = math.sin(2 * math.pi * (current_date.month - 1) / 12)
+                month_cos = math.cos(2 * math.pi * (current_date.month - 1) / 12)
+                day_sin = math.sin(2 * math.pi * (current_date.day - 1) / 31)
+                day_cos = math.cos(2 * math.pi * (current_date.day - 1) / 31)
+                weekday = current_date.weekday()
+                weekday_sin = math.sin(2 * math.pi * weekday / 7)
+                weekday_cos = math.cos(2 * math.pi * weekday / 7)
+                x_mark_dec[b, t, :] = torch.tensor([
+                    year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos
+                ], dtype=torch.float)
         return x_mark_enc, x_mark_dec
     
     def prepare_standard_inputs(self, past_data: torch.Tensor, future_data: torch.Tensor, 
