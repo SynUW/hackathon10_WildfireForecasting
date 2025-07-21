@@ -3,11 +3,12 @@ Is Mamba Effective for Time Series Forecasting?
 Standalone version - All dependencies included
 
 ToDo:
-- [ ] more effective time embedding
+- [√] more effective time embedding
 - [ ] MOE
-- [ ] Bayesian Mamba
+- [ ] Bayesian (wavelet transform) + Mamba
 - [ ] TimeXer or relevent SOTA models
 """
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

@@ -64,7 +64,7 @@ class Model(nn.Module):
         freq_map = {'h': 4, 't': 5, 's': 6,
                     'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
         
-        self.feature_dim=freq_map[self.freq]
+        self.feature_dim = 7  # 适配7维时间特征
 
 
         flatten_dim = self.seq_len + (self.seq_len + self.pred_len) * self.feature_encode_dim
