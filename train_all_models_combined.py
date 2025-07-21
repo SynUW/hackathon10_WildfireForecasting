@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_Focal_woFirms_onlyFirmsLoss_norm'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/30to1_Focal_withRegressionLoss'
 
 def print_config_status():
     """Print current configuration status"""
@@ -191,7 +191,7 @@ TRAINING_CONFIG = {
     'use_wandb': WANDB_ENABLED,         # Use WandB configuration
     'seed': GLOBAL_SEED,                # Use random seed
     'patience': DEFAULT_PATIENCE,       # Use patience configuration
-    'seq_len': 7,                      # Input sequence length
+    'seq_len': 30,                      # Input sequence length
     'pred_len': 1,                      # Prediction sequence length
     'focal_alpha': 0.5,                 # Use optimal Focal Loss positive sample weight
     'focal_gamma': 2.0,                 # Focal Loss focus parameter
@@ -1019,7 +1019,7 @@ class MultiTaskFocalLoss(nn.Module):
             'loss_type': 'focal'  # New: Loss function type identifier
         }
         # print(firms_loss, other_loss)
-        return firms_loss, loss_components  # total_loss, loss_components
+        return total_loss, loss_components  # total_loss, loss_components
 
 class MultiTaskKLDivLoss(nn.Module):
     """
@@ -1299,7 +1299,7 @@ class MultiTaskLoss(nn.Module):
         other_loss = other_loss * self.other_drivers_weight
         
         # Total loss
-        total_loss = firms_loss + other_loss
+        total_loss = firms_loss   # + other_loss
         
         # Return loss component information
         loss_components = {
@@ -1648,7 +1648,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             past, future = past.to(device), future.to(device)
             
             # 🔥 Fix: Don't delete the 0th channel, just set its data to 0, keeping the completeness of 39 channels
-            past[:, 0, :] = 0.0  # Set the 0th channel (FIRMS) to 0 instead of deleting
+            # past[:, 0, :] = 0.0  # Set the 0th channel (FIRMS) to 0 instead of deleting
                         
             if firms_normalizer is not None:
                 past, future = normalize_batch(past, future, firms_normalizer, metadata_list)
@@ -1717,7 +1717,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
                 past, future = past.to(device), future.to(device)
                 
                 # 🔥 Fix: Don't delete the 0th channel, just set its data to 0, keeping the completeness of 39 channels
-                past[:, 0, :] = 0.0  # Set the 0th channel (FIRMS) to 0 instead of deleting
+                # past[:, 0, :] = 0.0  # Set the 0th channel (FIRMS) to 0 instead of deleting
                 
                 # Why normalize future data!?!
                 if firms_normalizer is not None:
@@ -1942,7 +1942,7 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
             past, future = past.to(device), future.to(device)
             
             # 🔥 Fix: Don't delete the 0th channel, just set its data to 0, keeping the completeness of 39 channels
-            past[:, 0, :] = 0.0  # Set the 0th channel (FIRMS) to 0 instead of deleting
+            # past[:, 0, :] = 0.0  # Set the 0th channel (FIRMS) to 0 instead of deleting
             
             if firms_normalizer is not None:
                 past, future = normalize_batch(past, future, firms_normalizer, metadata_list)
@@ -2184,7 +2184,7 @@ def main():
                        help='Force retrain all models, ignoring existing model files')
     
     # Multi-task learning parameters
-    parser.add_argument('--firms-weight', type=float, default=1,  # 0.005 for focal loss, 0.1 for multitask 
+    parser.add_argument('--firms-weight', type=float, default=0.005,  # 0.005 for focal loss, 0.1 for multitask 
                        help='Loss weight for FIRMS prediction (default: 1.0)')
     parser.add_argument('--other-drivers-weight', type=float, default=1.0,
                        help='Loss weight for other drivers prediction (default: 1.0)')
