@@ -44,7 +44,7 @@ class UnifiedModelAdapter:
         
     def create_time_marks(self, date_strings: List[str], label_len: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Create time feature marks (归一化+周期化编码+weekday sin/cos)
+        Create time feature marks (归一化+周期化编码+weekday sin/cos) - Optimized version
         Args:
             date_strings: List of date strings, format YYYYMMDD
             label_len: Label length, for some models (e.g., Autoformer)
@@ -52,11 +52,14 @@ class UnifiedModelAdapter:
             x_mark_enc: Encoder time marks (B, seq_len, time_features)
             x_mark_dec: Decoder time marks (B, dec_time_len, time_features)
         """
-        import math
+        import numpy as np
+        from datetime import datetime, timedelta
+        
         batch_size = len(date_strings)
-        # 新特征数：year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos
         time_features = 7
         dec_time_len = label_len + self.pred_len
+        
+        # 批量解析日期并转换为基准日期
         base_dates = []
         for date_str in date_strings:
             try:
@@ -71,44 +74,61 @@ class UnifiedModelAdapter:
             except:
                 base_date = datetime(2010, 5, 6, 12, 0, 0)
             base_dates.append(base_date)
-        # Encoder time marks
-        x_mark_enc = torch.zeros(batch_size, self.seq_len, time_features)
-        for b in range(batch_size):
-            base_date = base_dates[b]
-            for t in range(self.seq_len):
-                days_offset = t - self.seq_len + 1
-                current_date = base_date + timedelta(days=days_offset)
-                # 归一化
-                year_norm = (current_date.year - 2000) / 24.0  # 假设最大到2024年
-                # 周期化
-                month_sin = math.sin(2 * math.pi * (current_date.month - 1) / 12)
-                month_cos = math.cos(2 * math.pi * (current_date.month - 1) / 12)
-                day_sin = math.sin(2 * math.pi * (current_date.day - 1) / 31)
-                day_cos = math.cos(2 * math.pi * (current_date.day - 1) / 31)
-                weekday = current_date.weekday()
-                weekday_sin = math.sin(2 * math.pi * weekday / 7)
-                weekday_cos = math.cos(2 * math.pi * weekday / 7)
-                x_mark_enc[b, t, :] = torch.tensor([
-                    year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos
-                ], dtype=torch.float)
-        # Decoder time marks
-        x_mark_dec = torch.zeros(batch_size, dec_time_len, time_features)
-        for b in range(batch_size):
-            base_date = base_dates[b]
-            for t in range(dec_time_len):
-                days_offset = t - label_len + 1
-                current_date = base_date + timedelta(days=days_offset)
-                year_norm = (current_date.year - 2000) / 24.0
-                month_sin = math.sin(2 * math.pi * (current_date.month - 1) / 12)
-                month_cos = math.cos(2 * math.pi * (current_date.month - 1) / 12)
-                day_sin = math.sin(2 * math.pi * (current_date.day - 1) / 31)
-                day_cos = math.cos(2 * math.pi * (current_date.day - 1) / 31)
-                weekday = current_date.weekday()
-                weekday_sin = math.sin(2 * math.pi * weekday / 7)
-                weekday_cos = math.cos(2 * math.pi * weekday / 7)
-                x_mark_dec[b, t, :] = torch.tensor([
-                    year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos
-                ], dtype=torch.float)
+        
+        def compute_time_features_vectorized(base_dates, time_offsets):
+            """向量化计算时间特征"""
+            batch_results = []
+            
+            for base_date in base_dates:
+                # 批量生成所有时间点
+                dates = [base_date + timedelta(days=int(offset)) for offset in time_offsets]
+                
+                # 提取所有时间组件
+                years = np.array([d.year for d in dates])
+                months = np.array([d.month for d in dates])
+                days = np.array([d.day for d in dates])
+                weekdays = np.array([d.weekday() for d in dates])
+                
+                # 向量化计算所有特征
+                year_norm = (years - 2000) / 24.0
+                
+                # 周期化编码 - 向量化
+                month_angles = 2 * np.pi * (months - 1) / 12
+                month_sin = np.sin(month_angles)
+                month_cos = np.cos(month_angles)
+                
+                day_angles = 2 * np.pi * (days - 1) / 31
+                day_sin = np.sin(day_angles)
+                day_cos = np.cos(day_angles)
+                
+                weekday_angles = 2 * np.pi * weekdays / 7
+                weekday_sin = np.sin(weekday_angles)
+                weekday_cos = np.cos(weekday_angles)
+                
+                # 堆叠所有特征
+                features = np.stack([
+                    year_norm, month_sin, month_cos, 
+                    day_sin, day_cos, weekday_sin, weekday_cos
+                ], axis=1)
+                
+                batch_results.append(features)
+            
+            return np.stack(batch_results)
+        
+        # 生成编码器时间偏移
+        enc_time_offsets = np.arange(self.seq_len) - self.seq_len + 1
+        
+        # 生成解码器时间偏移  
+        dec_time_offsets = np.arange(dec_time_len) - label_len + 1
+        
+        # 向量化计算编码器和解码器的时间特征
+        x_mark_enc_np = compute_time_features_vectorized(base_dates, enc_time_offsets)
+        x_mark_dec_np = compute_time_features_vectorized(base_dates, dec_time_offsets)
+        
+        # 转换为torch张量
+        x_mark_enc = torch.from_numpy(x_mark_enc_np).float()
+        x_mark_dec = torch.from_numpy(x_mark_dec_np).float()
+        
         return x_mark_enc, x_mark_dec
     
     def prepare_standard_inputs(self, past_data: torch.Tensor, future_data: torch.Tensor, 

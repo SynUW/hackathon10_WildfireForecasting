@@ -456,7 +456,7 @@ def main():
     model_configs = []
     
     # First batch: Core models (prioritize training)
-    priority_models = ["DLinear", "CrossLinear", "iTransformer", "s_mamba"]
+    priority_models = ["DLinear", "CrossLinear", "iTransformer", "s_mamba", "s_mamba_full"]
     
     # Initialize statistics
     models_to_train_standard = []
