@@ -43,7 +43,7 @@ warnings.filterwarnings("ignore")
 # Whether to enable WandB monitoring
 WANDB_ENABLED = False               # Whether to enable WandB monitoring
 GLOBAL_SEED = 42                   # Global random seed
-DEFAULT_PATIENCE = 20              # Default early stopping patience
+DEFAULT_PATIENCE = 10              # Default early stopping patience
 DEFAULT_MAX_PARALLEL_PER_GPU = 2   # Default maximum parallel tasks per GPU
 
 # Multi-task learning configuration

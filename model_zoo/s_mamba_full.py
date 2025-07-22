@@ -2,7 +2,7 @@
 Is Mamba Effective for Time Series Forecasting?
 
 Completed:
-- [√] Classic time embedding
+- [√] Effective time embedding: Novel DataEmbedding_inverted
 
 ToDo:
 - [ ] Non-Stationarity: 
