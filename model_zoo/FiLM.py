@@ -6,6 +6,8 @@ from scipy import signal
 from scipy import special as ss
 
 # device will be determined dynamically at runtime, not hardcoded here
+# only changed the device setting
+# https://github.com/mumiao2000/CrossLinear/blob/main/models/FiLM.py
 
 
 def transition(N):

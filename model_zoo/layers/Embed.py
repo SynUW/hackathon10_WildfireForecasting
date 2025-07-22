@@ -156,6 +156,7 @@ class series_decomp(nn.Module):
         moving_mean = self.moving_avg(x)
         res = x - moving_mean
         return res, moving_mean
+    
 class DataEmbedding_wo_pos(nn.Module):
     def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1):
         super(DataEmbedding_wo_pos, self).__init__()
@@ -173,14 +174,16 @@ class DataEmbedding_wo_pos(nn.Module):
         else:
             x = self.value_embedding(x) + self.temporal_embedding(x_mark)
         return self.dropout(x)
-"""
+
+
 class DataEmbedding_inverted(nn.Module):
-    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1):
+    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=7):
         super(DataEmbedding_inverted, self).__init__()
         self.value_embedding = nn.Linear(c_in, d_model)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x, x_mark):
+        # [B, L, N] -> [B, N, L]
         x = x.permute(0, 2, 1)
 
         # x: [Batch Variate Time]
@@ -188,35 +191,38 @@ class DataEmbedding_inverted(nn.Module):
 
             x = self.value_embedding(x)
         else:
+            # [B, N, L] -> [B, N+7, D] time_feat_dim=7 and each variable is embedded to a token
             x = self.value_embedding(torch.cat([x, x_mark.permute(0, 2, 1)], 1))
+            
         return self.dropout(x)
-"""    
-class DataEmbedding_inverted(nn.Module):
-    # modifications:
-    # original: cat(x, x_mark) and then embed
-    # modified: embed x and x_mark separately and then cat
+  
 
-    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=6):
-        super(DataEmbedding_inverted, self).__init__()
-        self.value_embedding = nn.Linear(c_in, d_model)
-        self.time_embedding = nn.Linear(time_feat_dim, d_model)
-        self.dropout = nn.Dropout(p=dropout)
+# class DataEmbedding_inverted(nn.Module):
+#     # modifications:
+#     # original: cat(x, x_mark) and then embed
+#     # modified: embed x and x_mark separately and then cat
 
-    def forward(self, x, x_mark):
-        # x: [B, L, N]  (batch, seq_len, num_vars)
-        # x_mark: [B, L, T] (batch, seq_len, time_feat_dim)
-        x = x.permute(0, 2, 1)  # [B, N, L]
-        # each variable is embedded to a token
-        value_emb = self.value_embedding(x)  # [B, N, d_model]
-        if x_mark is not None:
-            # time_feat_dim is 6, so each variable has a time embedding
-            time_emb = self.time_embedding(x_mark).permute(0, 2, 1)  # [B, d_model, L]
-            time_emb = time_emb.unsqueeze(1).expand(-1, value_emb.shape[1], -1, -1)  # [B, N, d_model, L]
-            time_emb = time_emb.mean(-1)  # [B, N, d_model]
-            x = value_emb + time_emb
-        else:
-            x = value_emb
-        return self.dropout(x)
+#     def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=6):
+#         super(DataEmbedding_inverted, self).__init__()
+#         self.value_embedding = nn.Linear(c_in, d_model)
+#         self.time_embedding = nn.Linear(time_feat_dim, d_model)
+#         self.dropout = nn.Dropout(p=dropout)
+
+#     def forward(self, x, x_mark):
+#         # x: [B, L, N]  (batch, seq_len, num_vars)
+#         # x_mark: [B, L, T] (batch, seq_len, time_feat_dim)
+#         x = x.permute(0, 2, 1)  # [B, N, L]
+#         # each variable is embedded to a token
+#         value_emb = self.value_embedding(x)  # [B, N, d_model]
+#         if x_mark is not None:
+#             # time_feat_dim is 6, so each variable has a time embedding
+#             time_emb = self.time_embedding(x_mark).permute(0, 2, 1)  # [B, d_model, L]
+#             time_emb = time_emb.unsqueeze(1).expand(-1, value_emb.shape[1], -1, -1)  # [B, N, d_model, L]
+#             time_emb = time_emb.mean(-1)  # [B, N, d_model]
+#             x = value_emb + time_emb
+#         else:
+#             x = value_emb
+#         return self.dropout(x)
 
 class PatchEmbedding(nn.Module):
     def __init__(self, d_model, patch_len, stride, padding, dropout):

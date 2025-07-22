@@ -41,6 +41,8 @@ class EncoderLayer(nn.Module):
 
         x = x + new_x
         y = x = self.norm1(x)
+        # why transpose? B N E -> B E N -> B N E
+        # 在N上滑动，捕捉特征间相关性
         y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
         y = self.dropout(self.conv2(y).transpose(-1, 1))
 

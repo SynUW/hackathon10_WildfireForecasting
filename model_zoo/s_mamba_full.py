@@ -1,11 +1,19 @@
 """
 Is Mamba Effective for Time Series Forecasting?
 
+Completed:
+- [√] Classic time embedding
+
 ToDo:
-- [√] more effective time embedding
-- [ ] MOE
-- [ ] Bayesian (wavelet transform) + Mamba
+- [ ] Non-Stationarity: 
+- [ ] Explainability: MOE
+- [ ] Multi-variate: 
 - [ ] TimeXer or relevent SOTA models
+
+Optional:
+- [ ] More effective time embedding
+- [ ] Bayesian (wavelet transform) + Mamba
+
 """
 
 import torch
@@ -128,16 +136,17 @@ class Model(nn.Module):
         # N: number of variate (tokens), can also includes covariates
 
         # Embedding
-        # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
+        # B L N -> B N E
         enc_out = self.enc_embedding(x_enc, x_mark_enc) # covariates (e.g timestamp) can be also embedded as tokens
         
-        # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
-        # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
+        # B N E -> B N E
+        # Using Mamba, Conv1D, and skip-connection to capture multi-variate dependencies
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
-        # B N E -> B N S -> B S N 
+        # B N E -> B N S (pred_len) -> B S N 
         dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :N] # filter the covariates
 
         if self.use_norm:
+            # this part needs a ablation study
             # De-Normalization from Non-stationary Transformer
             dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
             dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
@@ -157,7 +166,7 @@ if __name__ == '__main__':
     configs = Configs(
         seq_len=10,
         pred_len=7,
-        d_model=128,  # 增加计算量
+        d_model=256,  # 增加计算量
         d_state=64,
         d_ff=512,
         e_layers=3,
@@ -171,9 +180,9 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     
     for step in range(10):
-        x_enc = torch.randn(64, configs.seq_len, configs.d_model).to(device)
+        x_enc = torch.randn(64, configs.seq_len, 39).to(device)
         x_mark_enc = torch.randn(64, configs.seq_len, 7).to(device)
-        y_true = torch.randn(64, configs.pred_len, configs.d_model).to(device)
+        y_true = torch.randn(64, configs.pred_len, 39).to(device)
         
         optimizer.zero_grad()
         y_pred = model(x_enc, x_mark_enc, None, None)

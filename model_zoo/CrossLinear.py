@@ -1,3 +1,7 @@
+# CrossLinear
+# Exatly same as the original code
+# https://github.com/mumiao2000/CrossLinear/blob/main/models/CrossLinear.py
+
 import torch
 import torch.nn as nn
 import math
@@ -66,7 +70,6 @@ class Model(nn.Module):
         mean = torch.mean(x_obj, dim=-1, keepdim=True)
         std = torch.std(x_obj, dim=-1, keepdim=True)
         x_enc = (x_enc - torch.mean(x_enc, dim=-1, keepdim=True)) / (torch.std(x_enc, dim=-1, keepdim=True) + self.EPS)
-        
         # embedding
         x_obj = x_enc[:, [-1], :] if self.ms else x_enc
         x_obj = self.alpha * x_obj + (1 - self.alpha) * self.correlation_embedding(x_enc)
