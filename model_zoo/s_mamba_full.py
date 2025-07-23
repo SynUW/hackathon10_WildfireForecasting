@@ -5,10 +5,18 @@ Completed:
 - [√] Effective time embedding: Novel DataEmbedding_inverted
 
 ToDo:
-- [ ] Non-Stationarity: 
+- [ ] Non-Stationarity: Seasonal decomposition, trend decomposition; temporal embedding, positional embedding
+- [ ] Multi-resolution: 8d (2 times LAI resolution) tokenlization?
 - [ ] Explainability: KAN, Granger Causal Discovery
-- [ ] Multi-variate: 
-- [ ] SOTA models: TimeXer or relevent SOTA models
+- [ ] Multi-variate: Endogenous (Q) and Exogenous (K, V).
+    - [ ] how to preprocess Q, K, V?
+- [ ] SOTA models: 
+    - [ ] TimeXer: endogenous (Q) and exogenous (K, V). Actually, in its code, Q is global token (after self-attention with endogenous), K, V are exogenous.
+    - [ ] CrossLinear:
+    - [ ] TimeMixer++: 
+- [ ] MOE: GatedMoE
+    - [ ] Gate
+    - [ ] Top-k
 
 Optional:
 - [ ] More effective time embedding

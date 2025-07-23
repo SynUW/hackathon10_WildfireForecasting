@@ -94,6 +94,9 @@ class EncoderLayer(nn.Module):
 
     def forward(self, x, cross, x_mask=None, cross_mask=None, tau=None, delta=None):
         B, L, D = cross.shape
+        # self-attention for endogenous
+        # x: [B*N, L/patch_len+1, d_model]
+        # cross: [B, N, d_model]
         x = x + self.dropout(self.self_attention(
             x, x, x,
             attn_mask=x_mask,
@@ -103,6 +106,7 @@ class EncoderLayer(nn.Module):
 
         x_glb_ori = x[:, -1, :].unsqueeze(1)
         x_glb = torch.reshape(x_glb_ori, (B, -1, D))
+        # global attention as Q, cross as K, V
         x_glb_attn = self.dropout(self.cross_attention(
             x_glb, cross, cross,
             attn_mask=cross_mask,
@@ -115,6 +119,7 @@ class EncoderLayer(nn.Module):
 
         y = x = torch.cat([x[:, :-1, :], x_glb], dim=1)
 
+        # s_mamba used the same conv1d for variables interaction modeling
         y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
         y = self.dropout(self.conv2(y).transpose(-1, 1))
 
