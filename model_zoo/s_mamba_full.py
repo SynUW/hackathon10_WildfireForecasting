@@ -6,9 +6,9 @@ Completed:
 
 ToDo:
 - [ ] Non-Stationarity: 
-- [ ] Explainability: MOE
+- [ ] Explainability: KAN, Granger Causal Discovery
 - [ ] Multi-variate: 
-- [ ] TimeXer or relevent SOTA models
+- [ ] SOTA models: TimeXer or relevent SOTA models
 
 Optional:
 - [ ] More effective time embedding

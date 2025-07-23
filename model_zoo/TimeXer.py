@@ -37,13 +37,22 @@ class EnEmbedding(nn.Module):
         # do patching
         n_vars = x.shape[1]
         glb = self.glb_token.repeat((x.shape[0], 1, 1, 1))
-
+        # [B, N, L] -> [B, N, L/patch_len, patch_len]
         x = x.unfold(dimension=-1, size=self.patch_len, step=self.patch_len)
+
+        # [B, N, L/patch_len, patch_len] -> [B*N, L/patch_len, patch_len]
         x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
+        
         # Input encoding
+        # [B*N, L/patch_len, patch_len] -> [B*N, L/patch_len, d_model]
         x = self.value_embedding(x) + self.position_embedding(x)
+        # [B*N, L/patch_len, d_model] -> [B, N, L/patch_len, d_model]
         x = torch.reshape(x, (-1, n_vars, x.shape[-2], x.shape[-1]))
+
+        # [B, N, L/patch_len, d_model] -> [B, N, L/patch_len+1, d_model]
+        # serise-level global token is added to the last position
         x = torch.cat([x, glb], dim=2)
+        
         x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         return self.dropout(x), n_vars
 
@@ -57,6 +66,7 @@ class Encoder(nn.Module):
 
     def forward(self, x, cross, x_mask=None, cross_mask=None, tau=None, delta=None):
         for layer in self.layers:
+            # endogenous: x, exogenous: cross
             x = layer(x, cross, x_mask=x_mask, cross_mask=cross_mask, tau=tau, delta=delta)
 
         if self.norm is not None:
@@ -157,15 +167,25 @@ class Model(nn.Module):
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         if self.use_norm:
             # Normalization from Non-stationary Transformer
-            means = x_enc.mean(1, keepdim=True).detach()
-            x_enc = x_enc - means
-            stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-            x_enc /= stdev
+            # means = x_enc.mean(1, keepdim=True).detach()
+            # x_enc = x_enc - means
+            # stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
+            # x_enc /= stdev
 
+            valid_mask = torch.ones_like(x_enc)
+            valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+        
+            eps = 1e-8
+            valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+            means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            stdev = torch.sqrt(variances + eps)
+            x_enc = ((x_enc - means) / stdev) * valid_mask
+        
         _, _, N = x_enc.shape
 
-        en_embed, n_vars = self.en_embedding(x_enc[:, :, -1].unsqueeze(-1).permute(0, 2, 1))
-        ex_embed = self.ex_embedding(x_enc[:, :, :-1], x_mark_enc)
+        en_embed, n_vars = self.en_embedding(x_enc[:, :, 0].unsqueeze(-1).permute(0, 2, 1))
+        ex_embed = self.ex_embedding(x_enc[:, :, 1:], x_mark_enc)
 
         enc_out = self.encoder(en_embed, ex_embed)
         enc_out = torch.reshape(
@@ -229,4 +249,4 @@ class Model(nn.Module):
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
         else:
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+            return dec_out[:, -self.pred_len:, :]  # [B, L, D]  BTC

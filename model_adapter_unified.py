@@ -235,7 +235,7 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
         # s_mamba's special configuration
         's_mamba': {
             'd_model': 1024,
-            'd_ff': 1024,
+            'd_ff': 2048,
             'e_layers': 2,
             'activation': 'gelu',
             'use_norm': True,
@@ -306,8 +306,8 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
             'd_layers': 2   # Ensure decoder layers are equal
         },
         'TimeXer': {
-            'features': 'M',  # TimeXer requires features parameter
-            'patch_len': 16,  # patch related parameters
+            'features': 'M',  # TimeXer requires features parameter. S: single-variate, M: multi-variate
+            'patch_len': 7,   # patch related parameters, 16 by default
             'stride': 8,      # stride parameter
             'enc_in': 38,     # Ensure input dimension
             'c_out': 39       # Ensure output dimension
