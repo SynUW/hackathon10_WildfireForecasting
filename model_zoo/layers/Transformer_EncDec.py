@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
+import torch
 
 
 class ConvLayer(nn.Module):
@@ -21,34 +22,6 @@ class ConvLayer(nn.Module):
         x = self.maxPool(x)
         x = x.transpose(1, 2)
         return x
-
-
-class EncoderLayer(nn.Module):
-    def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu"):
-        super(EncoderLayer, self).__init__()
-        d_ff = d_ff or 4 * d_model
-        self.attention = attention
-        self.conv1 = nn.Conv1d(in_channels=d_model, out_channels=d_ff, kernel_size=1)
-        self.conv2 = nn.Conv1d(in_channels=d_ff, out_channels=d_model, kernel_size=1)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.activation = F.relu if activation == "relu" else F.gelu
-
-    def forward(self, x, attn_mask=None, tau=None, delta=None):
-        new_x, attn = self.attention(
-            x, x, x,
-            attn_mask=attn_mask,
-            tau=tau, delta=delta
-        )
-        x = x + self.dropout(new_x)
-
-        y = x = self.norm1(x)
-        y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
-        y = self.dropout(self.conv2(y).transpose(-1, 1))
-
-        return self.norm2(x + y), attn
-
 
 class Encoder(nn.Module):
     def __init__(self, attn_layers, conv_layers=None, norm_layer=None):
@@ -132,3 +105,91 @@ class Decoder(nn.Module):
         if self.projection is not None:
             x = self.projection(x)
         return x
+
+
+class GatedMoE(nn.Module):
+    def __init__(self, d_model, d_ff, num_experts=4, top_k=2, dropout=0.1):
+        super(GatedMoE, self).__init__()
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.experts = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model, d_ff),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_ff, d_model)
+            ) for _ in range(num_experts)
+        ])
+        self.gate = nn.Linear(d_model, num_experts)
+
+    def forward(self, x):
+        # x: [B, N, D]
+        gate_scores = torch.softmax(self.gate(x), dim=-1)  # [B, N, E]
+        topk_scores, topk_idx = torch.topk(gate_scores, self.top_k, dim=-1)  # [B, N, K]
+
+        B, N, D = x.shape
+        output = torch.zeros_like(x)
+
+        # Compute outputs per top-k expert
+        expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=0)  # [E, B, N, D]
+        for k in range(self.top_k):
+            idx = topk_idx[:, :, k]  # [B, N]
+            score = topk_scores[:, :, k].unsqueeze(-1)  # [B, N, 1]
+            # Gather outputs for each position's top-k expert
+            gathered = torch.gather(
+                expert_outputs.permute(1, 2, 3, 0),  # [B, N, D, E]
+                dim=3,
+                index=idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, x.shape[-1], 1)
+            ).squeeze(-1)  # [B, N, D]
+            output += score * gathered
+        return output
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu", num_experts=4, top_k=2, moe_active=False, multi_variate=False):
+        super(EncoderLayer, self).__init__()
+        d_ff = d_ff or 4 * d_model
+        self.attention = attention
+        self.conv1 = nn.Conv1d(in_channels=d_model, out_channels=d_ff, kernel_size=1)
+        self.conv2 = nn.Conv1d(in_channels=d_ff, out_channels=d_model, kernel_size=1)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = F.relu if activation == "relu" else F.gelu
+        
+        self.multi_variate = multi_variate
+        
+        self.moe_active = moe_active
+        self.moe = GatedMoE(d_model=d_model, d_ff=d_ff, num_experts=num_experts, top_k=top_k, dropout=dropout)
+
+
+    def forward(self, x, attn_mask=None, tau=None, delta=None):
+        # x: [B, N, D]
+        if self.multi_variate:
+            new_x, attn = self.attention(
+                x[:, 0, :].unsqueeze(1), x[:, 1:, :], x[:, 1:, :],
+                attn_mask=attn_mask,
+                tau=tau, delta=delta
+            )
+        
+        else:
+            new_x, attn = self.attention(
+                x, x, x,
+                attn_mask=attn_mask,
+                tau=tau, delta=delta
+            )
+        
+        x = x + self.dropout(new_x)
+        y = x = self.norm1(x)
+        
+        if self.moe_active:
+            y = self.moe(x)
+            # y = self.dropout(y)
+            y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+            y = self.dropout(self.conv2(y).transpose(-1, 1))
+        
+        else:
+            y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+            y = self.dropout(self.conv2(y).transpose(-1, 1))
+
+        return self.norm2(x + y), attn

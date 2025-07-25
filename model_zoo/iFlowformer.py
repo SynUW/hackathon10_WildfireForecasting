@@ -31,7 +31,9 @@ class Model(nn.Module):
                     configs.d_model,
                     configs.d_ff,
                     dropout=configs.dropout,
-                    activation=configs.activation
+                    activation=configs.activation,
+                    multi_variate=False,
+                    moe_active=False
                 ) for l in range(configs.e_layers)
             ],
             norm_layer=torch.nn.LayerNorm(configs.d_model)
@@ -57,7 +59,7 @@ class Model(nn.Module):
         x_enc = ((x_enc - means) / stdev) * valid_mask
 
         _, _, N = x_enc.shape
-
+        
         # Embedding
         enc_out = self.enc_embedding(x_enc, x_mark_enc)
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
@@ -72,5 +74,8 @@ class Model(nn.Module):
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         # print(x_mark_enc.shape)  B T 3 (year, month, day)
         # print(x_mark_enc[0, :, :])
+        
+        
+        
         dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
         return dec_out[:, -self.pred_len:, :]  # [B, L, D]

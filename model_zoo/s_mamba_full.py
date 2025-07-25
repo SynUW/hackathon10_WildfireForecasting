@@ -6,7 +6,9 @@ Completed:
 
 ToDo:
 - [ ] Non-Stationarity: Seasonal decomposition, trend decomposition; temporal embedding, positional embedding
-- [ ] Multi-resolution: 8d (2 times LAI resolution) tokenlization?
+    - [ ] The linear time-invariant (LTI) assumption of SSM may fail in non-stationary scenarios
+- [ ] Multi-resolution: 
+    - [ ] 8d (2 times LAI resolution) tokenlization?
 - [ ] Explainability: KAN, Granger Causal Discovery
 - [ ] Multi-variate: Endogenous (Q) and Exogenous (K, V).
     - [ ] how to preprocess Q, K, V?

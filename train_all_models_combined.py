@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_Focal_withRegressionLoss'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_Focal_withRegressionLoss'
 
 def print_config_status():
     """Print current configuration status"""
@@ -191,7 +191,7 @@ TRAINING_CONFIG = {
     'use_wandb': WANDB_ENABLED,         # Use WandB configuration
     'seed': GLOBAL_SEED,                # Use random seed
     'patience': DEFAULT_PATIENCE,       # Use patience configuration
-    'seq_len': 7,                      # Input sequence length
+    'seq_len': 365,                      # Input sequence length
     'pred_len': 1,                      # Prediction sequence length
     'focal_alpha': 0.5,                 # Use optimal Focal Loss positive sample weight
     'focal_gamma': 2.0,                 # Focal Loss focus parameter
