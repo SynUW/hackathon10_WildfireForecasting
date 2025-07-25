@@ -206,12 +206,14 @@ class DataEmbedding_inverted(nn.Module):
 
     def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=6):
         super(DataEmbedding_inverted, self).__init__()
-        # self.value_embedding = nn.Linear(c_in, d_model)
-        self.value_embedding = nn.Linear(16, d_model//(c_in//16), bias=False)
-        self.value_embedding_2 = nn.Linear(1012, d_model, bias=False)
+        self.value_embedding = nn.Linear(c_in, d_model)
+        self.value_embedding_1 = nn.Linear(8, d_model//(c_in//8), bias=False)
+        self.value_embedding_2 = nn.Linear(990, d_model, bias=False)
         self.time_embedding = nn.Linear(time_feat_dim, d_model)
         self.final_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(p=dropout)
+        
+        self.token_size = False
 
     def forward(self, x, x_mark):
         # x: [B, L, N]  (batch, seq_len, num_vars)
@@ -219,14 +221,17 @@ class DataEmbedding_inverted(nn.Module):
         x = x.permute(0, 2, 1)  # [B, N, L]
         B, N, L = x.shape
         # each variable is embedded to a token
+        if self.token_size is not None:
+            # tokenlize time series to tokens
+            x = x.unfold(dimension=-1, size=8, step=8)
+            x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
+            value_emb = self.value_embedding_1(x)  # [B*N, L/16, d_model//16]
         
-        # tokenlize time series to tokens
-        x = x.unfold(dimension=-1, size=16, step=16)
-        x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
-        value_emb = self.value_embedding(x)  # [B*N, L/16, d_model//16]
-        
-        value_emb = value_emb.reshape(B, N, -1)  # [B, N, d_model]
-        value_emb = self.value_embedding_2(value_emb)
+            value_emb = value_emb.reshape(B, N, -1)  # [B, N, d_model]
+            value_emb = self.dropout(value_emb)
+            value_emb = self.value_embedding_2(value_emb)
+        else:
+            value_emb = self.value_embedding(x)
         
         if x_mark is not None:
             # time_feat_dim is 6, so each variable has a time embedding
