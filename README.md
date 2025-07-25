@@ -149,3 +149,47 @@ python test_and_visualize_full.py
 
 ---
 For environment or training issues, please contact the maintainer or submit an issue. 
+
+## ToDo List
+
+### Model Enhancements
+- [ ] **Fourier/Wavelet/Laplace + Mamba**: Integrate frequency domain decomposition with Mamba architecture
+- [ ] **Patchify Time Series Data**: Implement TimiXer-style temporal patching for better long-range modeling
+- [ ] **Better MOE**: Enhance Mixture of Experts (MoME) implementation for improved performance
+
+### Data Processing
+- [ ] **Data Missing**: Handle missing data scenarios and implement robust imputation strategies
+- [ ] **Endogenous and Exogenous Variables**: Improve handling of internal and external variables
+
+---
+
+## Recommended Readings
+
+### Recent Papers on Time Series Forecasting
+
+1. **FLDmamba**: Integrating Fourier and Laplace Transform Decomposition with Mamba for Enhanced Time Series Prediction
+   - *Key focus: Frequency domain decomposition with Mamba architecture*
+
+2. **SpoT-Mamba**: Learning Long-Range Dependency on Spatio-Temporal Graphs with Selective State Spaces
+   - *Paper: [arXiv:2406.11244](https://arxiv.org/html/2406.11244v1)*
+   - *Key focus: Spatio-temporal modeling with selective state spaces*
+
+3. **Affirm**: Interactive Mamba with Adaptive Fourier Filters for Long-term Time Series Forecasting
+   - *Paper: [AAAI 2024](https://ojs.aaai.org/index.php/AAAI/article/view/35463)*
+   - *Key focus: Adaptive Fourier filters for long-term forecasting*
+
+4. **T-Mamba**: A Unified Framework with Long-Range Dependency in Dual-Domain for 2D & 3D Tooth Segmentation
+   - *Paper: [arXiv:2404.01065](https://arxiv.org/abs/2404.01065)*
+   - *Key focus: Dual-domain modeling for medical imaging*
+
+5. **TimeXer**: Empowering Transformers for Time Series Forecasting with Exogenous Variables
+   - *Paper: [arXiv:2402.19072](https://arxiv.org/pdf/2402.19072)*
+   - *Key focus: Transformer architecture with exogenous variable integration*
+
+6. **MoME**: Mixture of Multi-Domain Experts for Multivariate Long-Term Series Forecasting
+   - *Paper: [IEEE](https://ieeexplore.ieee.org/abstract/document/10887716)*
+   - *Key focus: Multi-domain expert mixture for multivariate forecasting*
+
+### Implementation Notes
+- These papers provide valuable insights for enhancing the current wildfire forecasting framework
+- Focus areas include: frequency domain methods, spatio-temporal modeling, and expert mixture approaches 

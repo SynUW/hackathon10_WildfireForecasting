@@ -213,7 +213,7 @@ class DataEmbedding_inverted(nn.Module):
         self.final_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(p=dropout)
         
-        self.token_size = False
+        self.token_size = None
 
     def forward(self, x, x_mark):
         # x: [B, L, N]  (batch, seq_len, num_vars)
