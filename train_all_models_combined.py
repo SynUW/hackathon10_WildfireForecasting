@@ -1575,7 +1575,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
         print(f"🔍 Multi-task Focal Loss configuration:")
         print(f"   FIRMS weight: {config.firms_weight}, other drivers weight: {config.other_drivers_weight}")
         print(f"   Focal α: {config.focal_alpha}, Focal γ: {config.focal_gamma}")
-        print(f"   回归损失: {config.loss_function}, 忽略0值: {config.ignore_zero_values}")
+        print(f"   Regression loss: {config.loss_function}, Ignore zero values: {config.ignore_zero_values}")
         
     elif config.loss_type == 'kldiv':
         # Use multi-task KL divergence Loss
