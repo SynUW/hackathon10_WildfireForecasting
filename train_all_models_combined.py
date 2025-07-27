@@ -2135,7 +2135,7 @@ def train_and_test_models(model_list, model_type, device, train_loader, val_load
     
     print("\n📁 All models saved to corresponding directories")
     save_dir = STANDARD_MODEL_DIR
-    print(f"�� Test results saved to directory: {save_dir}")
+    print(f"Test results saved to directory: {save_dir}")
     
     return structured_results
 

@@ -2,7 +2,15 @@ import torch
 import torch.nn as nn
 import numpy as np
 from math import sqrt
-from model_zoo.utils.masking import TriangularCausalMask, ProbMask
+import sys
+import os
+
+# 添加utils路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+utils_path = os.path.join(current_dir, '..', 'utils')
+sys.path.insert(0, utils_path)
+
+from masking import TriangularCausalMask, ProbMask
 from reformer_pytorch import LSHSelfAttention
 from einops import rearrange, repeat
 

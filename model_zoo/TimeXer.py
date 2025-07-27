@@ -1,10 +1,23 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layers.SelfAttention_Family import FullAttention, AttentionLayer
-from layers.Embed import DataEmbedding_inverted, PositionalEmbedding
+import sys
+import os
+
+# 添加正确的路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+layers_path = os.path.join(current_dir, 'layers')
+sys.path.insert(0, layers_path)
+
+from SelfAttention_Family import FullAttention, AttentionLayer
+from Embed import DataEmbedding_inverted, PositionalEmbedding
 import numpy as np
 
+# 添加utils路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(os.path.dirname(current_dir))
+utils_path = os.path.join(parent_dir, 'model_zoo', 'utils')
+sys.path.insert(0, utils_path)
 
 class FlattenHead(nn.Module):
     def __init__(self, n_vars, nf, target_window, head_dropout=0):
@@ -170,26 +183,28 @@ class Model(nn.Module):
                                 head_dropout=configs.dropout)
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-        if self.use_norm:
+        # if self.use_norm:
             # Normalization from Non-stationary Transformer
             # means = x_enc.mean(1, keepdim=True).detach()
             # x_enc = x_enc - means
             # stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
             # x_enc /= stdev
 
-            valid_mask = torch.ones_like(x_enc)
-            valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+            # valid_mask = torch.ones_like(x_enc)
+            # valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
         
-            eps = 1e-8
-            valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
-            means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-            variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-            stdev = torch.sqrt(variances + eps)
-            x_enc = ((x_enc - means) / stdev) * valid_mask
+            # eps = 1e-8
+            # valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+            # means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            # variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            # stdev = torch.sqrt(variances + eps)
+            # x_enc = ((x_enc - means) / stdev) * valid_mask
         
         _, _, N = x_enc.shape
 
+        # [B, L, N] -> [B, N, L] -> [B*N, L/patch_len, d_model]
         en_embed, n_vars = self.en_embedding(x_enc[:, :, 0].unsqueeze(-1).permute(0, 2, 1))
+        # [B, L, N-1] -> [B, N-1, L] -> [B, N-1, d_model]
         ex_embed = self.ex_embedding(x_enc[:, :, 1:], x_mark_enc)
 
         enc_out = self.encoder(en_embed, ex_embed)
@@ -201,34 +216,35 @@ class Model(nn.Module):
         dec_out = self.head(enc_out)  # z: [bs x nvars x target_window]
         dec_out = dec_out.permute(0, 2, 1)
 
-        if self.use_norm:
-            # De-Normalization from Non-stationary Transformer
-            dec_out = dec_out * (stdev[:, 0, -1:].unsqueeze(1).repeat(1, self.pred_len, 1))
-            dec_out = dec_out + (means[:, 0, -1:].unsqueeze(1).repeat(1, self.pred_len, 1))
+        # if self.use_norm:
+        #     # De-Normalization from Non-stationary Transformer
+        #     dec_out = dec_out * (stdev[:, 0, -1:].unsqueeze(1).repeat(1, self.pred_len, 1))
+        #     dec_out = dec_out + (means[:, 0, -1:].unsqueeze(1).repeat(1, self.pred_len, 1))
 
         return dec_out
 
 
     def forecast_multi(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-        if self.use_norm:
+        # if self.use_norm:
             # Normalization from Non-stationary Transformer
             # means = x_enc.mean(1, keepdim=True).detach()
             # x_enc = x_enc - means
             # stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
             # x_enc /= stdev
 
-            valid_mask = torch.ones_like(x_enc)
-            valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+            # valid_mask = torch.ones_like(x_enc)
+            # valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
         
-            eps = 1e-8
-            valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
-            means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-            variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-            stdev = torch.sqrt(variances + eps)
-            x_enc = ((x_enc - means) / stdev) * valid_mask
+            # eps = 1e-8
+            # valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+            # means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            # variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            # stdev = torch.sqrt(variances + eps)
+            # x_enc = ((x_enc - means) / stdev) * valid_mask
             
-        _, _, N = x_enc.shape
+        _, _, N = x_enc.shape  # 所以TimeXer的输入是BLN！！！
 
+        # [B, L, N] -> [B, N, L]
         en_embed, n_vars = self.en_embedding(x_enc.permute(0, 2, 1))
         ex_embed = self.ex_embedding(x_enc, x_mark_enc)
 
@@ -241,10 +257,10 @@ class Model(nn.Module):
         dec_out = self.head(enc_out)  # z: [bs x nvars x target_window]
         dec_out = dec_out.permute(0, 2, 1)
 
-        if self.use_norm:
-            # De-Normalization from Non-stationary Transformer
-            dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-            dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
+        # if self.use_norm:
+        #     # De-Normalization from Non-stationary Transformer
+        #     dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
+        #     dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
 
         return dec_out
 
@@ -255,3 +271,55 @@ class Model(nn.Module):
         else:
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]  BTC
+
+
+
+if __name__ == "__main__":
+
+    
+    # 修复bug：未定义Configs，改为简单的命名空间或使用types.SimpleNamespace
+    class Configs:
+        def __init__(self, task_name, features, seq_len, pred_len, use_norm):
+            self.task_name = task_name
+            self.features = features
+            self.seq_len = seq_len
+            self.pred_len = pred_len
+            self.use_norm = use_norm
+            # 添加所有缺失的属性
+            self.patch_len = 16  # 默认patch长度
+            self.d_model = 512   # 默认模型维度
+            self.n_heads = 8     # 默认注意力头数
+            self.e_layers = 2    # 默认编码器层数
+            self.d_ff = 2048     # 默认前馈网络维度
+            self.dropout = 0.1   # 默认dropout率
+            self.activation = 'gelu'  # 默认激活函数
+            self.enc_in = 39     # 默认输入通道数
+            self.c_out = 39      # 默认输出通道数
+            self.embed = 'timeF' # 默认嵌入类型
+            self.freq = 'd'      # 默认频率
+            self.output_attention = False  # 默认不输出注意力权重
+            self.factor = 5      # 默认factor参数
+
+    configs = Configs(
+        task_name='forecasting',
+        features='M',
+        seq_len=365,
+        pred_len=1,
+        use_norm=True,
+    )
+    model = Model(configs)
+    # 修复测试数据：使序列长度大于patch_len，并调整维度顺序
+    x_enc = torch.randn(1, 39, 365)  # [batch, seq_len, features] - 正确的格式
+    x_mark_enc = torch.randn(1, 7, 365)  # [batch, seq_len, time_features]
+    x_dec = torch.randn(1, 1, 39)  # [batch, pred_len, features]
+    x_mark_dec = torch.randn(1, 1, 7)  # [batch, pred_len, time_features]
+    
+    # 测试模型
+    try:
+        dec_out = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        print(f"✅ TimeXer model test successful!")
+        print(f"Output shape: {dec_out.shape}")
+    except Exception as e:
+        print(f"❌ TimeXer model test failed: {e}")
+        import traceback
+        traceback.print_exc()

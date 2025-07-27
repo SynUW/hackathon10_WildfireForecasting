@@ -1,8 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layers.SelfAttention_Family import FullAttention, AttentionLayer
-from layers.Embed import DataEmbedding_inverted, PositionalEmbedding
+import sys
+import os
+
+# 添加正确的路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+model_layers_path = os.path.join(current_dir, 'model_layers')
+sys.path.insert(0, model_layers_path)
+
+from SelfAttention_Family import FullAttention, AttentionLayer
+from Embed import DataEmbedding_inverted, PositionalEmbedding
 import numpy as np
 
 

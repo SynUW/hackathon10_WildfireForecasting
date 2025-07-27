@@ -306,7 +306,7 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
             'd_layers': 2   # Ensure decoder layers are equal
         },
         'TimeXer': {
-            'features': 'M',  # TimeXer requires features parameter. S: single-variate, M: multi-variate
+            'features': 'MS',  # TimeXer requires features parameter. S: single-variate, M: multi-variate
             'patch_len': 7,   # patch related parameters, 16 by default
             'stride': 8,      # stride parameter
             'enc_in': 38,     # Ensure input dimension
