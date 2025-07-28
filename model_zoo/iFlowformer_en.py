@@ -8,64 +8,16 @@ import numpy as np
 
 
 class EnEmbedding(nn.Module):
-    def __init__(self, d_model, dropout, rbf_centers=10, rbf_gamma=1.0, learnable_centers=True):
+    def __init__(self, d_model, dropout):
         super(EnEmbedding, self).__init__()
         # Patching
         # self.patch_len = patch_len
-
-        self.use_rbf = False
-        if self.use_rbf:
-            # RBF层参数
-            self.rbf_centers = rbf_centers
-            self.rbf_gamma = rbf_gamma
-            self.learnable_centers = learnable_centers
-            
-            if learnable_centers:
-                # 可学习的RBF中心点
-                self.rbf_centers_param = nn.Parameter(torch.randn(rbf_centers) * 2 - 1)  # 初始化为[-1, 1]范围
-            else:
-                # 固定的RBF中心点（从输入数据范围中采样）
-                self.register_buffer('rbf_centers_buffer', torch.linspace(-5, 5, rbf_centers))
-            
-            # RBF输出维度
-            self.rbf_output_dim = rbf_centers
-            
-            # 从RBF输出到d_model的映射
-            self.value_embedding = nn.Linear(self.rbf_output_dim, d_model, bias=False)
-        else:
-            self.value_embedding = nn.Linear(365, d_model, bias=False)
+        self.value_embedding = nn.Linear(365, d_model, bias=False)
             
         self.glb_token = nn.Parameter(torch.randn(1, 1, d_model))
         self.position_embedding = PositionalEmbedding(d_model)
 
         self.dropout = nn.Dropout(dropout)
-
-    def rbf_transform(self, x):
-        """应用RBF变换"""
-        # x: [B, N, L] -> [B*N*L, 1]
-        B, N, L = x.shape
-        x_flat = x.reshape(-1, 1)  # [B*N*L, 1]
-        
-        # 获取RBF中心点
-        if self.learnable_centers:
-            rbf_centers = self.rbf_centers_param
-        else:
-            rbf_centers = self.rbf_centers_buffer
-        
-        # 计算与每个RBF中心的距离
-        # [B*N*L, 1] - [rbf_centers] -> [B*N*L, rbf_centers]
-        distances = x_flat - rbf_centers.unsqueeze(0)
-        
-        # 应用RBF核函数: exp(-gamma * distance^2)
-        rbf_output = torch.exp(-self.rbf_gamma * distances ** 2)
-        
-        # 重塑回原始形状
-        rbf_output = rbf_output.reshape(B, N, L, self.rbf_output_dim)
-        
-        # 对时间维度求平均，得到每个变量的RBF特征
-        rbf_features = rbf_output.mean(dim=2)  # [B, N, rbf_output_dim]
-        
-        return rbf_features
 
     def forward(self, x):
         # do patching
@@ -77,21 +29,7 @@ class EnEmbedding(nn.Module):
         # [B, N, L/patch_len, patch_len] -> [B*N, L/patch_len, patch_len]
         # x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         
-                
-        # 应用RBF变换（如果启用）
-        if self.use_rbf:
-            # 应用RBF变换
-            rbf_features = self.rbf_transform(x)  # [B, N, rbf_output_dim]
-            
-            # 通过value_embedding映射到d_model
-            x = self.value_embedding(rbf_features)  # [B, N, d_model]
-            
-            # 添加位置编码（对每个变量添加相同的位置编码）
-            pos_encoding = self.position_embedding(x)  # [B, N, d_model]
-            x = x + pos_encoding
-        else:
-            # 原始处理方式
-            x = self.value_embedding(x) + self.position_embedding(x)
+        x = self.value_embedding(x) + self.position_embedding(x)
         
         # Input encoding
         # [B*N, L/patch_len, patch_len] -> [B*N, L/patch_len, d_model]
@@ -120,37 +58,23 @@ class Model(nn.Module):
         self.pred_len = configs.pred_len
         self.output_attention = configs.output_attention
         
-        # RBF参数（从configs中获取，如果没有则使用默认值）
-        rbf_centers = 10  # 10个center
-        rbf_gamma = 1.0
-        learnable_centers = True  # otherwise, use fixed centers
-        
         # Embedding
         self.en_embedding = EnEmbedding(
             configs.d_model, 
             configs.dropout,
-            rbf_centers=rbf_centers,
-            rbf_gamma=rbf_gamma,
-            learnable_centers=learnable_centers
         )
+        
+        # 为exogenous_x添加RBF处理
+        self.exo_rbf_centers = 50 # 10 centers by default
+        self.exo_rbf_gamma = 10  # 1.0 by default
+        learnable_centers=False
+        if learnable_centers:
+            self.exo_rbf_centers_param = nn.Parameter(torch.randn(self.exo_rbf_centers) * 2 - 1)
+        else:
+            self.register_buffer('exo_rbf_centers_buffer', torch.linspace(-1, 1, self.exo_rbf_centers))
+        
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
                                                     configs.dropout, time_feat_dim=7)
-        # Encoder-only architecture
-        self.encoder = Encoder(
-            [
-                EncoderLayer(
-                    AttentionLayer(
-                        FlowAttention(attention_dropout=configs.dropout), configs.d_model, configs.n_heads),
-                    configs.d_model,
-                    configs.d_ff,
-                    dropout=configs.dropout,
-                    activation=configs.activation,
-                    multi_variate=True,
-                    moe_active=False
-                ) for l in range(configs.e_layers)
-            ],
-            norm_layer=torch.nn.LayerNorm(configs.d_model)
-        )
         
         self.en_encoder = Encoder(
             [
@@ -168,8 +92,142 @@ class Model(nn.Module):
             norm_layer=torch.nn.LayerNorm(configs.d_model)
         )
         
+        # Encoder-only architecture
+        self.encoder = Encoder(
+            [
+                EncoderLayer(
+                    AttentionLayer(
+                        FlowAttention(attention_dropout=configs.dropout), configs.d_model, configs.n_heads),
+                    configs.d_model,
+                    configs.d_ff,
+                    dropout=configs.dropout,
+                    activation=configs.activation,
+                    multi_variate=True,
+                    moe_active=False
+                ) for l in range(configs.e_layers)
+            ],
+            norm_layer=torch.nn.LayerNorm(configs.d_model)
+        )
+        
         self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
 
+    def fourier_transform_features(self, x):
+        """对时间序列应用傅里叶变换并提取特征"""
+        # x: [B, L, N] -> [B, L, N]
+        B, L, N = x.shape
+        
+        # 应用FFT
+        fft_result = torch.fft.fft(x, dim=1)  # [B, L, N]
+        
+        # 提取幅度谱（前L//2个频率分量）
+        magnitude = torch.abs(fft_result[:, :L//2, :])  # [B, L//2, N]
+        
+        # 提取相位谱
+        phase = torch.angle(fft_result[:, :L//2, :])  # [B, L//2, N]
+        
+        # 计算功率谱密度
+        power_spectrum = magnitude ** 2  # [B, L//2, N]
+        
+        # 提取主要频率特征（只取前2个频率分量）
+        dominant_freqs = magnitude[:, :2, :]  # [B, 2, N]
+        
+        # 计算频谱统计特征
+        mean_freq = magnitude.mean(dim=1, keepdim=True)  # [B, 1, N]
+        max_freq = magnitude.max(dim=1, keepdim=True)[0]  # [B, 1, N]
+        
+        # 拼接特征（减少特征数量）
+        fourier_features = torch.cat([
+            dominant_freqs,  # [B, 2, N]
+            mean_freq,       # [B, 1, N]
+            max_freq         # [B, 1, N]
+        ], dim=1)  # [B, 4, N]
+        
+        return fourier_features
+
+    def wavelet_transform_features(self, x):
+        """对时间序列应用小波变换并提取特征"""
+        # x: [B, L, N] -> [B, L, N]
+        B, L, N = x.shape
+        
+        # 使用简单的Haar小波变换（可以通过卷积实现）
+        # 这里使用简化的方法：计算不同尺度的差分特征
+        
+        # 1尺度差分
+        diff1 = x[:, 1:, :] - x[:, :-1, :]  # [B, L-1, N]
+        
+        # 2尺度差分
+        diff2 = x[:, 2:, :] - x[:, :-2, :]  # [B, L-2, N]
+        
+        # 计算统计特征（只保留均值）
+        mean_diff1 = diff1.mean(dim=1, keepdim=True)  # [B, 1, N]
+        mean_diff2 = diff2.mean(dim=1, keepdim=True)  # [B, 1, N]
+        
+        # 拼接小波特征（减少特征数量）
+        wavelet_features = torch.cat([
+            mean_diff1,  # [B, 1, N]
+            mean_diff2   # [B, 1, N]
+        ], dim=1)  # [B, 2, N]
+        
+        return wavelet_features
+
+    def exo_rbf_transform(self, x):
+        """为exogenous_x应用RBF变换，先插值再提取RBF特征（高效向量化版本）"""
+        # x: [B, L, N] -> [B, L, N]
+        B, L, N = x.shape
+        
+        # 获取RBF中心点
+        if hasattr(self, 'exo_rbf_centers_param'):
+            rbf_centers = self.exo_rbf_centers_param
+        else:
+            rbf_centers = self.exo_rbf_centers_buffer
+        
+        # 创建原始缺失值掩码（0值表示缺失）
+        original_mask = (x == 0).float()  # [B, L, N]
+        
+        # 快速插值：使用前向填充和后向填充的组合
+        x_interpolated = x.clone()
+        
+        # 重塑为 [B*N, L] 进行批量处理
+        x_reshaped = x.reshape(B * N, L)  # [B*N, L]
+        
+        # 创建缺失值掩码
+        missing_mask = (x_reshaped == 0)  # [B*N, L]
+        
+        # 前向填充
+        x_forward = x_reshaped.clone()
+        for i in range(1, L):
+            x_forward[:, i] = torch.where(
+                missing_mask[:, i],
+                x_forward[:, i-1],
+                x_forward[:, i]
+            )
+        
+        # 后向填充
+        x_backward = x_reshaped.clone()
+        for i in range(L-2, -1, -1):
+            x_backward[:, i] = torch.where(
+                missing_mask[:, i],
+                x_backward[:, i+1],
+                x_backward[:, i]
+            )
+        
+        # 取前向和后向填充的平均值
+        x_interpolated_reshaped = (x_forward + x_backward) / 2
+        
+        # 恢复原始形状
+        x_interpolated = x_interpolated_reshaped.view(B, L, N)
+        
+        # 向量化RBF变换
+        # [B, L, N, 1] - [rbf_centers] -> [B, L, N, rbf_centers]
+        distances = x_interpolated.unsqueeze(-1) - rbf_centers.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+        
+        # 应用RBF核函数
+        rbf_output = torch.exp(-self.exo_rbf_gamma * distances ** 2)  # [B, L, N, rbf_centers]
+        
+        # 对RBF中心维度求平均
+        rbf_features = rbf_output.mean(dim=-1)  # [B, L, N]
+        
+        return rbf_features, original_mask
 
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
@@ -200,8 +258,45 @@ class Model(nn.Module):
         endo_embed, attns = self.en_encoder(endo_embed, attn_mask=None)
         endo_embed = endo_embed[:, 0, :].unsqueeze(1)  # B, 1, d_model, global token
     
+        # 对MODIS数据应用RBF变换
+        exo_modis, original_mask_tensor = self.exo_rbf_transform(exogenous_x[:, :, 20:])  # [B, L, 18]
+        exogenous_x = torch.cat([exogenous_x[:, :, :20], exo_modis], dim=2)
+        
+        # 对ERA5和RBF后的MODIS数据应用傅里叶变换和小波变换，并提取特征拼接输入模型
+        exo_weather = exogenous_x[:, :, 1:13]  # ERA5数据 (前12个变量)
+        exo_modis_rbf = exogenous_x[:, :, 20:]  # RBF处理后的MODIS数据
+        
+        # 应用傅里叶变换
+        fourier_weather = self.fourier_transform_features(exo_weather)  # [B, 8, 12]
+        fourier_modis = self.fourier_transform_features(exo_modis_rbf)  # [B, 8, 18]
+        
+        # 应用小波变换
+        wavelet_weather = self.wavelet_transform_features(exo_weather)  # [B, 6, 12]
+        wavelet_modis = self.wavelet_transform_features(exo_modis_rbf)  # [B, 6, 18]
+        
+        # 将变换特征与原始数据拼接
+        # 原始数据: [B, L, 38] (20个原始变量 + 18个RBF特征)
+        # 傅里叶特征: [B, 4, 30] (4个特征 × 30个变量)
+        # 小波特征: [B, 2, 30] (2个特征 × 30个变量)
+        
+        # 拼接傅里叶特征
+        fourier_combined = torch.cat([fourier_weather, fourier_modis], dim=2)  # [B, 4, 30]
+        # 将傅里叶特征扩展到时间维度
+        fourier_expanded = fourier_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 4, 30]
+        fourier_expanded = fourier_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 120]
+        
+        # 拼接小波特征
+        wavelet_combined = torch.cat([wavelet_weather, wavelet_modis], dim=2)  # [B, 2, 30]
+        # 将小波特征扩展到时间维度
+        wavelet_expanded = wavelet_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 2, 30]
+        wavelet_expanded = wavelet_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 60]
+        
+        # 最终拼接：原始数据 + 傅里叶特征 + 小波特征。不使用小波和傅里叶，注释掉这行就可以了
+        exogenous_x = torch.cat([exogenous_x, wavelet_expanded], dim=2)  # fourier_expanded, 
+        
         enc_out = self.enc_embedding(exogenous_x, x_mark_enc)
         enc = torch.cat([endo_embed, enc_out], dim=1)
+        
         enc_out, attns = self.encoder(enc, attn_mask=None)
 
         dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :N]
@@ -214,8 +309,6 @@ class Model(nn.Module):
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         # print(x_mark_enc.shape)  B T 3 (year, month, day)
         # print(x_mark_enc[0, :, :])
-        
-        
         
         dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
         return dec_out[:, -self.pred_len:, :]  # [B, L, D]
