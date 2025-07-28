@@ -137,15 +137,16 @@ class Model(nn.Module):
         # x_enc = x_enc - means
         # stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         # x_enc /= stdev
-        valid_mask = torch.ones_like(x_enc)
-        valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
         
-        eps = 1e-8
-        valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
-        means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-        variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-        stdev = torch.sqrt(variances + eps)
-        x_enc = ((x_enc - means) / stdev) * valid_mask
+        # valid_mask = torch.ones_like(x_enc)
+        # valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+        
+        # eps = 1e-8
+        # valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+        # means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        # variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        # stdev = torch.sqrt(variances + eps)
+        # x_enc = ((x_enc - means) / stdev) * valid_mask
 
         x_enc = x_enc * self.affine_weight + self.affine_bias
         x_decs = []
@@ -166,10 +167,10 @@ class Model(nn.Module):
         x_dec = self.mlp(x_dec).squeeze(-1).permute(0, 2, 1)
 
         # De-Normalization from Non-stationary Transformer
-        x_dec = x_dec - self.affine_bias
-        x_dec = x_dec / (self.affine_weight + 1e-10)
-        x_dec = x_dec * stdev
-        x_dec = x_dec + means
+        # x_dec = x_dec - self.affine_bias
+        # x_dec = x_dec / (self.affine_weight + 1e-10)
+        # x_dec = x_dec * stdev
+        # x_dec = x_dec + means
         return x_dec
 
     def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):

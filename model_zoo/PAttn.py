@@ -56,15 +56,15 @@ class Model(nn.Module):
         #     torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         # x_enc /= stdev
         
-        valid_mask = torch.ones_like(x_enc)
-        valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+        # valid_mask = torch.ones_like(x_enc)
+        # valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
         
-        eps = 1e-8
-        valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
-        means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-        variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-        stdev = torch.sqrt(variances + eps)
-        x_enc = ((x_enc - means) / stdev) * valid_mask
+        # eps = 1e-8
+        # valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+        # means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        # variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        # stdev = torch.sqrt(variances + eps)
+        # x_enc = ((x_enc - means) / stdev) * valid_mask
         
         B, _, C = x_enc.shape
         x_enc = x_enc.permute(0, 2, 1)
@@ -77,8 +77,8 @@ class Model(nn.Module):
         dec_out = self.out_layer(dec_out)
         dec_out = dec_out.permute(0, 2, 1)
         
-        dec_out = dec_out * \
-                  (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-        dec_out = dec_out + \
-                  (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
+        # dec_out = dec_out * \
+        #           (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
+        # dec_out = dec_out + \
+        #           (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
         return dec_out

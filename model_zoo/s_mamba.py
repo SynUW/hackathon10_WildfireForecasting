@@ -95,24 +95,24 @@ class Model(nn.Module):
     #     print('trainable_ratio:', trainable_ratio)
 
     def forecast(self, x_enc, x_mark_enc):
-        if self.use_norm:
+        # if self.use_norm:
             # Normalization from Non-stationary Transformer
-            """
-            mask = (x_enc != 0).float() # mask out the zero (ignore) values
-            means = x_enc.mean(1, keepdim=True).detach()
-            x_enc = x_enc - means
-            stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-            x_enc /= stdev
-            """
-            valid_mask = torch.ones_like(x_enc)
-            valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
             
-            eps = 1e-8
-            valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
-            means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-            variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-            stdev = torch.sqrt(variances + eps)
-            x_enc = ((x_enc - means) / stdev) * valid_mask
+            # mask = (x_enc != 0).float() # mask out the zero (ignore) values
+            # means = x_enc.mean(1, keepdim=True).detach()
+            # x_enc = x_enc - means
+            # stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
+            # x_enc /= stdev
+            
+            # valid_mask = torch.ones_like(x_enc)
+            # valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+            
+            # eps = 1e-8
+            # valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+            # means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            # variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+            # stdev = torch.sqrt(variances + eps)
+            # x_enc = ((x_enc - means) / stdev) * valid_mask
 
 
         _, _, N = x_enc.shape # B L N
@@ -130,10 +130,10 @@ class Model(nn.Module):
         # B N E -> B N S -> B S N 
         dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :N] # filter the covariates
 
-        if self.use_norm:
-            # De-Normalization from Non-stationary Transformer
-            dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-            dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
+        # if self.use_norm:
+        #     # De-Normalization from Non-stationary Transformer
+        #     dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
+        #     dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
 
         return dec_out
 

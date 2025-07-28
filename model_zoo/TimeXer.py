@@ -49,7 +49,7 @@ class EnEmbedding(nn.Module):
     def forward(self, x):
         # do patching
         n_vars = x.shape[1]
-        glb = self.glb_token.repeat((x.shape[0], 1, 1, 1))
+        glb = self.glb_token.repeat((x.shape[0], 1, 1))
         # [B, N, L] -> [B, N, L/patch_len, patch_len]
         x = x.unfold(dimension=-1, size=self.patch_len, step=self.patch_len)
 
@@ -64,7 +64,9 @@ class EnEmbedding(nn.Module):
 
         # [B, N, L/patch_len, d_model] -> [B, N, L/patch_len+1, d_model]
         # serise-level global token is added to the last position
-        x = torch.cat([x, glb], dim=2)
+        # 调整glb的形状以匹配x
+        glb_expanded = glb.unsqueeze(1).expand(-1, n_vars, -1, -1)  # [B, N, 1, d_model]
+        x = torch.cat([x, glb_expanded], dim=2)
         
         x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         return self.dropout(x), n_vars
@@ -204,7 +206,7 @@ class Model(nn.Module):
 
         # [B, L, N] -> [B, N, L] -> [B*N, L/patch_len, d_model]
         en_embed, n_vars = self.en_embedding(x_enc[:, :, 0].unsqueeze(-1).permute(0, 2, 1))
-        # [B, L, N-1] -> [B, N-1, L] -> [B, N-1, d_model]
+        # [B, L, N-1] -> [B, N-1, L] -> [B, N-1, L, d_model]
         ex_embed = self.ex_embedding(x_enc[:, :, 1:], x_mark_enc)
 
         enc_out = self.encoder(en_embed, ex_embed)

@@ -207,7 +207,7 @@ class DataEmbedding_inverted(nn.Module):
     def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, time_feat_dim=6):
         super(DataEmbedding_inverted, self).__init__()
         self.value_embedding = nn.Linear(c_in, d_model)
-        self.value_embedding_1 = nn.Linear(8, d_model//(c_in//8), bias=False)
+        self.value_embedding_1 = nn.Linear(1, d_model//(c_in//1), bias=False)
         self.value_embedding_2 = nn.Linear(990, d_model, bias=False)
         self.time_embedding = nn.Linear(time_feat_dim, d_model)
         self.final_proj = nn.Linear(d_model, d_model)

@@ -185,15 +185,16 @@ class Model(nn.Module):
         # x_enc = x_enc - means
         # stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
         # x_enc /= stdev
-        valid_mask = torch.ones_like(x_enc)
-        valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
         
-        eps = 1e-8
-        valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
-        means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-        variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
-        stdev = torch.sqrt(variances + eps)
-        x_enc = ((x_enc - means) / stdev) * valid_mask
+        # valid_mask = torch.ones_like(x_enc)
+        # valid_mask[:, :, 1:] = (x_enc[:, :, 1:] != 0).float()
+        
+        # eps = 1e-8
+        # valid_counts = valid_mask.sum(dim=1, keepdim=True) + eps
+        # means = (x_enc * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        # variances = ((x_enc - means)**2 * valid_mask).sum(dim=1, keepdim=True) / valid_counts
+        # stdev = torch.sqrt(variances + eps)
+        # x_enc = ((x_enc - means) / stdev) * valid_mask
 
         # position-encoding
         pe = self.get_position_encoding(x_enc)
@@ -214,12 +215,12 @@ class Model(nn.Module):
             dec_out = self.projection_2(dec_out)
 
         # De-Normalization from Non-stationary Transformer
-        dec_out = dec_out * \
-                  (stdev[:, 0, :].unsqueeze(1).repeat(
-                      1, self.pred_len + self.seq_len, 1))
-        dec_out = dec_out + \
-                  (means[:, 0, :].unsqueeze(1).repeat(
-                      1, self.pred_len + self.seq_len, 1))
+        # dec_out = dec_out * \
+        #           (stdev[:, 0, :].unsqueeze(1).repeat(
+        #               1, self.pred_len + self.seq_len, 1))
+        # dec_out = dec_out + \
+        #           (means[:, 0, :].unsqueeze(1).repeat(
+        #               1, self.pred_len + self.seq_len, 1))
         return dec_out
 
     def get_position_encoding(self, x):
