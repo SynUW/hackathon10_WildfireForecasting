@@ -1,9 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layers.Transformer_EncDec import Encoder, EncoderLayer
-from layers.SelfAttention_Family import FlowAttention, AttentionLayer
-from layers.Embed import DataEmbedding_inverted, PositionalEmbedding
+import sys
+import os
+
+# 添加正确的路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+layers_path = os.path.join(current_dir, 'layers')
+sys.path.insert(0, layers_path)
+
+from Transformer_EncDec import Encoder, EncoderLayer
+from SelfAttention_Family import FlowAttention, AttentionLayer
+from Embed import DataEmbedding_inverted, PositionalEmbedding
 import numpy as np
 
 
@@ -72,6 +80,30 @@ class Model(nn.Module):
             self.exo_rbf_centers_param = nn.Parameter(torch.randn(self.exo_rbf_centers) * 2 - 1)
         else:
             self.register_buffer('exo_rbf_centers_buffer', torch.linspace(-1, 1, self.exo_rbf_centers))
+        
+        # 添加可学习的频率域变换矩阵
+        self.freq_transform_weather_mag = nn.Parameter(torch.randn(12))  # ERA5幅度变换参数
+        self.freq_transform_weather_phase = nn.Parameter(torch.randn(12))  # ERA5相位变换参数
+        
+        # 使用最大维度初始化MODIS变换参数，运行时动态调整
+        self.max_modis_dim = 1500  # 设置最大维度
+        self.freq_transform_modis_mag = nn.Parameter(torch.randn(self.max_modis_dim))  # MODIS幅度变换参数
+        self.freq_transform_modis_phase = nn.Parameter(torch.randn(self.max_modis_dim))  # MODIS相位变换参数
+        
+        # FFT-ILT变换参数
+        self.fft_filter_W = nn.Parameter(torch.randn(2 * configs.d_model, configs.d_model))  # 频域滤波矩阵 (2*D for real+imag)
+        self.ilt_linear = nn.Linear(configs.d_model, configs.d_model)  # ILT线性映射
+        
+        # 可学习的ILT重建参数 (A_n, σ_n, w_n, φ_n)
+        self.ilt_A = nn.Parameter(torch.randn(configs.d_model))  # 幅度参数
+        self.ilt_sigma = nn.Parameter(torch.randn(configs.d_model))  # 衰减参数
+        self.ilt_w = nn.Parameter(torch.randn(configs.d_model))  # 频率参数
+        self.ilt_phi = nn.Parameter(torch.randn(configs.d_model))  # 相位参数
+        
+        # 控制变量
+        self.fourier_as_features = False  # 是否将傅里叶特征作为额外特征
+        self.fft_ifft = True  # 是否使用FFT-IFFT变换
+        self.fft_ilt = True  # 是否使用FFT-ILT变换
         
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
                                                     configs.dropout, time_feat_dim=7)
@@ -170,6 +202,55 @@ class Model(nn.Module):
         
         return wavelet_features
 
+    def fft_ilt_transform(self, x):
+        """对特征图进行FFT-ILT变换"""
+        # x: [B, L, D] -> [B, L, D]
+        B, L, D = x.shape
+        
+        # 1. FFT变换到频域
+        fft_x = torch.fft.fft(x, dim=1)  # [B, L, D]
+        
+        # 2. 将复数转换为实数进行处理
+        fft_x_real = torch.cat([fft_x.real, fft_x.imag], dim=-1)  # [B, L, 2*D]
+        
+        # 3. 与可学习的滤波矩阵W相乘
+        # 重塑为 [B*L, 2*D] 进行矩阵乘法
+        fft_x_reshaped = fft_x_real.reshape(B * L, 2 * D)  # [B*L, 2*D]
+        fft_filtered = torch.mm(fft_x_reshaped, self.fft_filter_W)  # [B*L, D]
+        fft_filtered = fft_filtered.reshape(B, L, D)  # [B, L, D]
+        
+        # 4. 线性映射
+        fft_mapped = self.ilt_linear(fft_filtered)  # [B, L, D]
+        
+        # 5. 可学习的逆拉普拉斯变换 (ILT)
+        # 使用学习到的参数重建时域信号
+        # 公式: f(t) = Σ A_n * exp(-σ_n * t) * cos(w_n * t + φ_n)
+        
+        # 创建时间向量
+        t = torch.arange(L, dtype=x.dtype, device=x.device).unsqueeze(0).unsqueeze(-1)  # [1, L, 1]
+        
+        # 应用可学习的ILT参数
+        # 确保参数为正数（使用softplus激活）
+        A = F.softplus(self.ilt_A.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
+        sigma = F.softplus(self.ilt_sigma.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
+        w = F.softplus(self.ilt_w.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
+        phi = self.ilt_phi.unsqueeze(0).unsqueeze(0)  # [1, 1, D]
+        
+        # 计算ILT重建
+        # exp(-σ_n * t) * cos(w_n * t + φ_n)
+        decay = torch.exp(-sigma * t)  # [1, L, D]
+        oscillation = torch.cos(w * t + phi)  # [1, L, D]
+        
+        # 最终重建
+        ilt_reconstructed = A * decay * oscillation  # [1, L, D]
+        
+        # 将ILT重建与频域映射结果结合
+        # 使用门控机制控制ILT的影响
+        gate = torch.sigmoid(fft_mapped.mean(dim=-1, keepdim=True))  # [B, L, 1]
+        output = gate * ilt_reconstructed + (1 - gate) * fft_mapped  # [B, L, D]
+        
+        return output
+
     def exo_rbf_transform(self, x):
         """为exogenous_x应用RBF变换，先插值再提取RBF特征（高效向量化版本）"""
         # x: [B, L, N] -> [B, L, N]
@@ -263,42 +344,100 @@ class Model(nn.Module):
         exogenous_x = torch.cat([exogenous_x[:, :, :20], exo_modis], dim=2)
         
         # 对ERA5和RBF后的MODIS数据应用傅里叶变换和小波变换，并提取特征拼接输入模型
-        exo_weather = exogenous_x[:, :, 1:13]  # ERA5数据 (前12个变量)
-        exo_modis_rbf = exogenous_x[:, :, 20:]  # RBF处理后的MODIS数据
-        
-        # 应用傅里叶变换
-        fourier_weather = self.fourier_transform_features(exo_weather)  # [B, 8, 12]
-        fourier_modis = self.fourier_transform_features(exo_modis_rbf)  # [B, 8, 18]
-        
-        # 应用小波变换
-        wavelet_weather = self.wavelet_transform_features(exo_weather)  # [B, 6, 12]
-        wavelet_modis = self.wavelet_transform_features(exo_modis_rbf)  # [B, 6, 18]
-        
-        # 将变换特征与原始数据拼接
-        # 原始数据: [B, L, 38] (20个原始变量 + 18个RBF特征)
-        # 傅里叶特征: [B, 4, 30] (4个特征 × 30个变量)
-        # 小波特征: [B, 2, 30] (2个特征 × 30个变量)
-        
-        # 拼接傅里叶特征
-        fourier_combined = torch.cat([fourier_weather, fourier_modis], dim=2)  # [B, 4, 30]
-        # 将傅里叶特征扩展到时间维度
-        fourier_expanded = fourier_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 4, 30]
-        fourier_expanded = fourier_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 120]
-        
-        # 拼接小波特征
-        wavelet_combined = torch.cat([wavelet_weather, wavelet_modis], dim=2)  # [B, 2, 30]
-        # 将小波特征扩展到时间维度
-        wavelet_expanded = wavelet_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 2, 30]
-        wavelet_expanded = wavelet_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 60]
-        
-        # 最终拼接：原始数据 + 傅里叶特征 + 小波特征。不使用小波和傅里叶，注释掉这行就可以了
-        exogenous_x = torch.cat([exogenous_x, wavelet_expanded], dim=2)  
-        
         enc_out = self.enc_embedding(exogenous_x, x_mark_enc)
-        enc = torch.cat([endo_embed, enc_out], dim=1)
+        exo_weather = enc_out[:, :, 1:13]  # ERA5数据 (前12个变量)
+        exo_modis_rbf = enc_out[:, :, 20:]  # RBF处理后的MODIS数据
+        
+        if self.fourier_as_features:
+            # 应用傅里叶变换
+            fourier_weather = self.fourier_transform_features(exo_weather)  # [B, 8, 12]
+            fourier_modis = self.fourier_transform_features(exo_modis_rbf)  # [B, 8, 18]
+            
+            # 应用小波变换
+            wavelet_weather = self.wavelet_transform_features(exo_weather)  # [B, 6, 12]
+            wavelet_modis = self.wavelet_transform_features(exo_modis_rbf)  # [B, 6, 18]
+            
+            # 将变换特征与原始数据拼接
+            # 原始数据: [B, L, 38] (20个原始变量 + 18个RBF特征)
+            # 傅里叶特征: [B, 4, 30] (4个特征 × 30个变量)
+            # 小波特征: [B, 2, 30] (2个特征 × 30个变量)
+            
+            # 拼接傅里叶特征
+            fourier_combined = torch.cat([fourier_weather, fourier_modis], dim=2)  # [B, 4, 30]
+            # 将傅里叶特征扩展到时间维度
+            fourier_expanded = fourier_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 4, 30]
+            fourier_expanded = fourier_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 120]
+            
+            # 拼接小波特征
+            wavelet_combined = torch.cat([wavelet_weather, wavelet_modis], dim=2)  # [B, 2, 30]
+            # 将小波特征扩展到时间维度
+            wavelet_expanded = wavelet_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 2, 30]
+            wavelet_expanded = wavelet_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 60]
+            
+            # 最终拼接：原始数据 + 傅里叶特征 + 小波特征。不使用小波和傅里叶，注释掉这行就可以了
+            enc_out = torch.cat([exogenous_x, wavelet_expanded, fourier_expanded], dim=2)  
+        elif self.fft_ifft:
+            # 对ERA5和MODIS数据分别进行傅里叶变换
+            # exo_weather: [B, L, 12], exo_modis_rbf: [B, L, N] (N可能变化)
+            
+            # 动态检测MODIS数据维度
+            modis_dim = exo_modis_rbf.shape[-1]
+            
+            # 傅里叶变换到频率域
+            fft_weather = torch.fft.fft(exo_weather, dim=1)  # [B, L, 12]
+            fft_modis = torch.fft.fft(exo_modis_rbf, dim=1)  # [B, L, N]
+            
+            # 应用可学习的频率域变换（使用幅度和相位）
+            # 对ERA5数据
+            magnitude_weather = torch.abs(fft_weather)  # [B, L, 12]
+            phase_weather = torch.angle(fft_weather)    # [B, L, 12]
+            
+            # 应用可学习的幅度和相位变换
+            magnitude_weather_transformed = magnitude_weather * torch.sigmoid(self.freq_transform_weather_mag.unsqueeze(0).unsqueeze(0))
+            phase_weather_transformed = phase_weather + self.freq_transform_weather_phase.unsqueeze(0).unsqueeze(0)
+            
+            # 重建复数
+            fft_weather_transformed = magnitude_weather_transformed * torch.exp(1j * phase_weather_transformed)
+            
+            # 对MODIS数据 - 使用动态调整的参数
+            magnitude_modis = torch.abs(fft_modis)  # [B, L, N]
+            phase_modis = torch.angle(fft_modis)    # [B, L, N]
+            
+            # 动态调整变换参数维度
+            if modis_dim <= self.max_modis_dim:
+                # 使用前N个参数
+                mag_params = self.freq_transform_modis_mag[:modis_dim]
+                phase_params = self.freq_transform_modis_phase[:modis_dim]
+            else:
+                # 如果超出最大维度，使用插值
+                indices = torch.linspace(0, self.max_modis_dim-1, modis_dim, device=self.freq_transform_modis_mag.device)
+                mag_params = torch.interp(indices, torch.arange(self.max_modis_dim, device=self.freq_transform_modis_mag.device), self.freq_transform_modis_mag)
+                phase_params = torch.interp(indices, torch.arange(self.max_modis_dim, device=self.freq_transform_modis_phase.device), self.freq_transform_modis_phase)
+            
+            # 应用可学习的幅度和相位变换
+            magnitude_modis_transformed = magnitude_modis * torch.sigmoid(mag_params.unsqueeze(0).unsqueeze(0))
+            phase_modis_transformed = phase_modis + phase_params.unsqueeze(0).unsqueeze(0)
+            
+            # 重建复数
+            fft_modis_transformed = magnitude_modis_transformed * torch.exp(1j * phase_modis_transformed)
+            
+            # 逆傅里叶变换回时间域
+            exo_weather_transformed = torch.fft.ifft(fft_weather_transformed, dim=1).real  # [B, L, 12]
+            exo_modis_transformed = torch.fft.ifft(fft_modis_transformed, dim=1).real  # [B, L, N]
+            
+            # 将变换后的数据替换回原始位置（避免原地操作）
+            enc_out_transformed = enc_out.clone()
+            enc_out_transformed[:, :, 1:13] = exo_weather_transformed  # 替换ERA5数据
+            enc_out_transformed[:, :, 20:] = exo_modis_transformed     # 替换MODIS数据
+            
+            enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
         
         enc_out, attns = self.encoder(enc, attn_mask=None)
-
+        
+        # 应用FFT-ILT变换到encoder输出
+        if self.fft_ilt:
+            enc_out = self.fft_ilt_transform(enc_out)  # [B, L, D]
+        
         dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :N]
         # De-Normalization from Non-stationary Transformer
         # dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
