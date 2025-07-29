@@ -202,7 +202,7 @@ TRAINING_CONFIG = {
         'batch_size': 128,
         'learning_rate': 5e-5,          # Lower learning rate
         'weight_decay': 1e-4,
-        'T_0': 20,
+        'T_0': 100000,
         'T_mult': 2,
         'eta_min':1e-5,
         'max_grad_norm': 0.0,           # Enable gradient clipping to prevent gradient explosion; 0.0 means no clipping
