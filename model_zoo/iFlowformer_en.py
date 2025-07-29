@@ -292,7 +292,7 @@ class Model(nn.Module):
         wavelet_expanded = wavelet_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 60]
         
         # 最终拼接：原始数据 + 傅里叶特征 + 小波特征。不使用小波和傅里叶，注释掉这行就可以了
-        exogenous_x = torch.cat([exogenous_x, wavelet_expanded], dim=2)  # fourier_expanded, 
+        exogenous_x = torch.cat([exogenous_x, wavelet_expanded], dim=2)  
         
         enc_out = self.enc_embedding(exogenous_x, x_mark_enc)
         enc = torch.cat([endo_embed, enc_out], dim=1)
