@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import sys
 import os
 
-# 添加正确的路径
+# Add correct path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 layers_path = os.path.join(current_dir, 'layers')
 sys.path.insert(0, layers_path)
@@ -57,7 +57,7 @@ class EnEmbedding(nn.Module):
 class LearnableFilterLayer(nn.Module):
     def __init__(self, dim):
         super(LearnableFilterLayer, self).__init__()
-        # 动态调整权重维度以匹配输入
+        # Dynamically adjust weight dimensions to match input
         self.complex_weight_1 = nn.Parameter(torch.randn(1, 1, dim, dtype=torch.float32) * 0.02)
         self.complex_weight_2 = nn.Parameter(torch.randn(1, 1, dim, dtype=torch.float32) * 0.02)
         trunc_normal_(self.complex_weight_1, std=.02)
@@ -67,16 +67,16 @@ class LearnableFilterLayer(nn.Module):
         # x_fft shape: [B, N, C] -> [B, N, C//2+1] (rfft)
         B, N, C = x_fft.shape
         
-        # 确保权重维度匹配
+        # Ensure weight dimensions match
         if self.complex_weight_1.shape[-1] != C:
-            # 动态调整权重维度 - 使用正确的维度
+            # Dynamically adjust weight dimensions - use correct dimensions
             weight_1 = F.interpolate(self.complex_weight_1, size=C, mode='linear')
             weight_2 = F.interpolate(self.complex_weight_2, size=C, mode='linear')
         else:
             weight_1 = self.complex_weight_1
             weight_2 = self.complex_weight_2
             
-        # 扩展权重以匹配批次和序列维度
+        # Expand weights to match batch and sequence dimensions
         weight_1 = weight_1.expand(B, N, -1)
         weight_2 = weight_2.expand(B, N, -1)
         
@@ -98,8 +98,8 @@ class Adaptive_Fourier_Filter_Block(nn.Module):
         self.learnable_filter_layer_3 = LearnableFilterLayer(dim)
         
         self.threshold_param = nn.Parameter(torch.rand(1) * 0.5)
-        self.low_pass_cut_freq_param = nn.Parameter(dim // 2 - torch.rand(1) * 0.5)  # 用于确定低通滤波的截至频率
-        self.high_pass_cut_freq_param = nn.Parameter(dim // 4 - torch.rand(1) * 0.5)  # 高通滤波的截至频率
+        self.low_pass_cut_freq_param = nn.Parameter(dim // 2 - torch.rand(1) * 0.5)  # Used to determine low-pass filter cutoff frequency
+        self.high_pass_cut_freq_param = nn.Parameter(dim // 4 - torch.rand(1) * 0.5)  # High-pass filter cutoff frequency
         self.adaptive_filter = True
     
     def create_adaptive_high_freq_mask(self, x_fft):
@@ -143,6 +143,145 @@ class Adaptive_Fourier_Filter_Block(nn.Module):
         return x
 
 
+class Adaptive_Wavelet_Filter_Block(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.learnable_filter_layer_1 = LearnableFilterLayer(dim)
+        self.learnable_filter_layer_2 = LearnableFilterLayer(dim)
+        self.learnable_filter_layer_3 = LearnableFilterLayer(dim)
+        
+        # Wavelet-specific parameters
+        self.wavelet_scales = 4  # Number of wavelet decomposition scales
+        self.threshold_param = nn.Parameter(torch.rand(1) * 0.5)  # Adaptive threshold for wavelet coefficients
+        self.scale_weights = nn.Parameter(torch.randn(self.wavelet_scales))  # Learnable weights for different scales
+        self.adaptive_filter = True
+        
+        # Wavelet reconstruction parameters
+        self.reconstruction_weight = nn.Parameter(torch.randn(1))
+        
+    def wavelet_decomposition(self, x):
+        """Multi-scale wavelet decomposition using Haar wavelets"""
+        B, N, C = x.shape
+        wavelet_coeffs = []
+        current_signal = x
+        
+        for scale in range(self.wavelet_scales):
+            if current_signal.shape[1] >= 4:  # Ensure sufficient data points
+                # Ensure sequence length is even
+                if current_signal.shape[1] % 2 == 1:
+                    current_signal = torch.cat([current_signal, current_signal[:, -1:, :]], dim=1)
+                
+                # Haar wavelet decomposition
+                approx = (current_signal[:, ::2, :] + current_signal[:, 1::2, :]) / 2.0  # Approximation coefficients
+                detail = (current_signal[:, ::2, :] - current_signal[:, 1::2, :]) / 2.0  # Detail coefficients
+                
+                wavelet_coeffs.append((approx, detail))
+                current_signal = approx  # Continue decomposition with approximation
+            else:
+                break
+                
+        return wavelet_coeffs
+    
+    def adaptive_wavelet_filtering(self, wavelet_coeffs):
+        """Apply adaptive filtering to wavelet coefficients"""
+        filtered_coeffs = []
+        
+        for scale_idx, (approx, detail) in enumerate(wavelet_coeffs):
+            # Apply learnable scale weights
+            scale_weight = torch.sigmoid(self.scale_weights[scale_idx % len(self.scale_weights)])
+            
+            # Adaptive thresholding for detail coefficients (edge detection)
+            detail_energy = torch.abs(detail).pow(2).mean(dim=-1, keepdim=True)  # [B, L_scale, 1]
+            threshold = torch.quantile(detail_energy, self.threshold_param)
+            detail_mask = (detail_energy > threshold).float()
+            
+            # Filter detail coefficients based on energy
+            filtered_detail = detail * detail_mask * scale_weight
+            
+            # Keep approximation coefficients mostly unchanged (low-frequency components)
+            filtered_approx = approx * scale_weight
+            
+            filtered_coeffs.append((filtered_approx, filtered_detail))
+            
+        return filtered_coeffs
+    
+    def wavelet_reconstruction(self, filtered_coeffs, original_shape):
+        """Reconstruct signal from filtered wavelet coefficients"""
+        if not filtered_coeffs:
+            return torch.zeros(original_shape, device=original_shape[0].device if hasattr(original_shape[0], 'device') else 'cpu')
+        
+        # Start reconstruction from the coarsest scale
+        reconstructed = filtered_coeffs[-1][0]  # Coarsest approximation coefficients
+        
+        # Reconstruct from coarse to fine scales
+        for scale_idx in range(len(filtered_coeffs) - 2, -1, -1):
+            approx, detail = filtered_coeffs[scale_idx]
+            
+            # Ensure dimensions match before upsampling
+            target_length = approx.shape[1]
+            
+            # Use interpolation to match dimensions
+            if reconstructed.shape[1] != target_length:
+                reconstructed = F.interpolate(
+                    reconstructed.permute(0, 2, 1),  # [B, C, L]
+                    size=target_length,
+                    mode='linear',
+                    align_corners=False
+                ).permute(0, 2, 1)  # [B, L, C]
+            
+            # Simple addition for reconstruction (avoid complex upsampling)
+            reconstructed = reconstructed + detail
+        
+        # Ensure final output has correct length
+        if reconstructed.shape[1] != original_shape[1]:
+            reconstructed = F.interpolate(
+                reconstructed.permute(0, 2, 1),  # [B, C, L]
+                size=original_shape[1],
+                mode='linear',
+                align_corners=False
+            ).permute(0, 2, 1)  # [B, L, C]
+            
+        return reconstructed
+    
+    def forward(self, x_in):
+        B, N, C = x_in.shape
+        dtype = x_in.dtype
+        x = x_in.to(torch.float32)
+        
+        # 1. Multi-scale wavelet decomposition
+        wavelet_coeffs = self.wavelet_decomposition(x)
+        
+        # 2. Apply adaptive filtering to wavelet coefficients
+        filtered_coeffs = self.adaptive_wavelet_filtering(wavelet_coeffs)
+        
+        # 3. Reconstruct signal from filtered coefficients
+        x_reconstructed = self.wavelet_reconstruction(filtered_coeffs, x.shape)
+        
+        # 4. Apply learnable transformations (simplified for real-valued signals)
+        if self.adaptive_filter:
+            # Simple element-wise transformations for real-valued signals
+            # Use the real part of complex weights as simple scaling factors
+            weight_1 = self.learnable_filter_layer_1.complex_weight_1.squeeze().real.mean()
+            weight_2 = self.learnable_filter_layer_2.complex_weight_1.squeeze().real.mean()
+            weight_3 = self.learnable_filter_layer_3.complex_weight_1.squeeze().real.mean()
+            
+            # Apply different weights to different components
+            x_approx = x_reconstructed * weight_1  # Main signal
+            x_detail = x_reconstructed * weight_2  # Detail components
+            x_edge = x_reconstructed * weight_3    # Edge components
+            
+            # Combine filtered components
+            x_weighted = x_approx + 0.5 * x_detail + 0.2 * x_edge
+        else:
+            x_weighted = x_reconstructed
+        
+        # 5. Apply reconstruction weight
+        x_weighted = x_weighted * torch.sigmoid(self.reconstruction_weight)
+        
+        x = x_weighted.to(dtype)
+        return x
+
+
 class Model(nn.Module):
     """
     Vanilla Transformer
@@ -162,7 +301,7 @@ class Model(nn.Module):
             configs.dropout,
         )
         
-        # 为exogenous_x添加RBF处理
+        # Add RBF processing for exogenous_x
         self.exo_rbf_centers = 50 # 10 centers by default
         self.exo_rbf_gamma = 10  # 1.0 by default
         learnable_centers=False
@@ -171,45 +310,46 @@ class Model(nn.Module):
         else:
             self.register_buffer('exo_rbf_centers_buffer', torch.linspace(-1, 1, self.exo_rbf_centers))
         
-        # 添加可学习的频率域变换矩阵
-        self.freq_transform_weather_mag = nn.Parameter(torch.randn(12))  # ERA5幅度变换参数
-        self.freq_transform_weather_phase = nn.Parameter(torch.randn(12))  # ERA5相位变换参数
+        # Add learnable frequency domain transformation matrices
+        self.freq_transform_weather_mag = nn.Parameter(torch.randn(12))  # ERA5 magnitude transformation parameters
+        self.freq_transform_weather_phase = nn.Parameter(torch.randn(12))  # ERA5 phase transformation parameters
         
-        # 使用最大维度初始化MODIS变换参数，运行时动态调整
-        self.max_modis_dim = 1500  # 设置最大维度
-        self.freq_transform_modis_mag = nn.Parameter(torch.randn(self.max_modis_dim))  # MODIS幅度变换参数
-        self.freq_transform_modis_phase = nn.Parameter(torch.randn(self.max_modis_dim))  # MODIS相位变换参数
+        # Initialize MODIS transformation parameters with maximum dimensions, dynamically adjusted at runtime
+        self.max_modis_dim = 1500  # Set maximum dimension
+        self.freq_transform_modis_mag = nn.Parameter(torch.randn(self.max_modis_dim))  # MODIS magnitude transformation parameters
+        self.freq_transform_modis_phase = nn.Parameter(torch.randn(self.max_modis_dim))  # MODIS phase transformation parameters
         
-        # FFT-ILT变换参数
-        self.fft_filter_W = nn.Parameter(torch.randn(configs.d_model, configs.d_model))  # 频域滤波矩阵
-        self.ilt_linear = nn.Linear(configs.d_model, configs.d_model)  # ILT线性映射
+        # FFT-ILT transformation parameters
+        self.fft_filter_W = nn.Parameter(torch.randn(configs.d_model, configs.d_model))  # Frequency domain filter matrix
+        self.ilt_linear = nn.Linear(configs.d_model, configs.d_model)  # ILT linear mapping
         
-        # 可学习的ILT重建参数 (A_n, σ_n, w_n, φ_n)
-        self.ilt_A = nn.Parameter(torch.randn(configs.d_model))  # 幅度参数
-        self.ilt_sigma = nn.Parameter(torch.randn(configs.d_model))  # 衰减参数
-        self.ilt_w = nn.Parameter(torch.randn(configs.d_model))  # 频率参数
-        self.ilt_phi = nn.Parameter(torch.randn(configs.d_model))  # 相位参数
+        # Learnable ILT reconstruction parameters (A_n, σ_n, w_n, φ_n)
+        self.ilt_A = nn.Parameter(torch.randn(configs.d_model))  # Amplitude parameters
+        self.ilt_sigma = nn.Parameter(torch.randn(configs.d_model))  # Decay parameters
+        self.ilt_w = nn.Parameter(torch.randn(configs.d_model))  # Frequency parameters
+        self.ilt_phi = nn.Parameter(torch.randn(configs.d_model))  # Phase parameters
         
-        # 小波变换输出参数
-        self.wavelet_scales = 4  # 小波分解尺度数
-        self.wavelet_filter_W = nn.Parameter(torch.randn(configs.d_model, configs.d_model))  # 小波域滤波矩阵
-        self.wavelet_linear = nn.Linear(configs.d_model, configs.d_model)  # 小波线性映射
+        # Wavelet transformation output parameters
+        self.wavelet_scales = 4  # Number of wavelet decomposition scales
+        self.wavelet_filter_W = nn.Parameter(torch.randn(configs.d_model, configs.d_model))  # Wavelet domain filter matrix
+        self.wavelet_linear = nn.Linear(configs.d_model, configs.d_model)  # Wavelet linear mapping
         
-        # 可学习的小波重建参数
-        self.wavelet_A = nn.Parameter(torch.randn(configs.d_model))  # 小波幅度参数
-        self.wavelet_scale = nn.Parameter(torch.randn(configs.d_model))  # 小波尺度参数
-        self.wavelet_shift = nn.Parameter(torch.randn(configs.d_model))  # 小波平移参数
+        # Learnable wavelet reconstruction parameters
+        self.wavelet_A = nn.Parameter(torch.randn(configs.d_model))  # Wavelet amplitude parameters
+        self.wavelet_scale = nn.Parameter(torch.randn(configs.d_model))  # Wavelet scale parameters
+        self.wavelet_shift = nn.Parameter(torch.randn(configs.d_model))  # Wavelet shift parameters
         
-        # 控制变量
-        self.fourier_as_features = False  # 是否将傅里叶特征作为额外特征
-        self.fft_ifft = False  # 是否使用FFT-IFFT变换
-        self.fft_ilt = False  # 是否使用FFT-ILT变换做为输出
+        # Control variables
+        self.fourier_as_features = False  # Whether to use Fourier features as additional features
+        self.fft_ifft = False  # Whether to use FFT-IFFT transformation for ERA5 and MODIS
+        self.affirm_transform = False  # Whether to use affirm transformation for ERA5 and MODIS
+        self.wavelet_transform = False  # Whether to use adaptive wavelet transformation for ERA5 and MODIS
+        
+        self.fft_ilt = False  # Whether to use FFT-ILT transformation as output
+        self.wavelet_output = False  # Whether to use wavelet transformation as output
         
         self.affirm_adaptive_filter = Adaptive_Fourier_Filter_Block(configs.d_model)
-        self.affirm_transform = True
-        
-        self.wavelet_output = False
-        
+        self.adaptive_wavelet_filter = Adaptive_Wavelet_Filter_Block(configs.d_model)
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
                                                     configs.dropout, time_feat_dim=7)
         
@@ -239,7 +379,7 @@ class Model(nn.Module):
                     configs.d_ff,
                     dropout=configs.dropout,
                     activation=configs.activation,
-                    multi_variate=True,
+                    multi_variate=False,
                     moe_active=False
                 ) for l in range(configs.e_layers)
             ],
@@ -249,30 +389,30 @@ class Model(nn.Module):
         self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
 
     def fourier_transform_features(self, x):
-        """对时间序列应用傅里叶变换并提取特征"""
+        """Apply Fourier transform to time series and extract features"""
         # x: [B, L, N] -> [B, L, N]
         B, L, N = x.shape
         
-        # 应用FFT
+        # Apply FFT
         fft_result = torch.fft.fft(x, dim=1)  # [B, L, N]
         
-        # 提取幅度谱（前L//2个频率分量）
+        # Extract magnitude spectrum (first L//2 frequency components)
         magnitude = torch.abs(fft_result[:, :L//2, :])  # [B, L//2, N]
         
-        # 提取相位谱
+        # Extract phase spectrum
         phase = torch.angle(fft_result[:, :L//2, :])  # [B, L//2, N]
         
-        # 计算功率谱密度
+        # Calculate power spectral density
         power_spectrum = magnitude ** 2  # [B, L//2, N]
         
-        # 提取主要频率特征（只取前2个频率分量）
+        # Extract dominant frequency features (only take first 2 frequency components)
         dominant_freqs = magnitude[:, :2, :]  # [B, 2, N]
         
-        # 计算频谱统计特征
+        # Calculate spectral statistical features
         mean_freq = magnitude.mean(dim=1, keepdim=True)  # [B, 1, N]
         max_freq = magnitude.max(dim=1, keepdim=True)[0]  # [B, 1, N]
         
-        # 拼接特征（减少特征数量）
+        # Concatenate features (reduce feature count)
         fourier_features = torch.cat([
             dominant_freqs,  # [B, 2, N]
             mean_freq,       # [B, 1, N]
@@ -282,24 +422,24 @@ class Model(nn.Module):
         return fourier_features
 
     def wavelet_transform_features(self, x):
-        """对时间序列应用小波变换并提取特征"""
+        """Apply wavelet transform to time series and extract features"""
         # x: [B, L, N] -> [B, L, N]
         B, L, N = x.shape
         
-        # 使用简单的Haar小波变换（可以通过卷积实现）
-        # 这里使用简化的方法：计算不同尺度的差分特征
+        # Use simple Haar wavelet transform (can be implemented via convolution)
+        # Here use simplified method: calculate difference features at different scales
         
-        # 1尺度差分
+        # 1-scale difference
         diff1 = x[:, 1:, :] - x[:, :-1, :]  # [B, L-1, N]
         
-        # 2尺度差分
+        # 2-scale difference
         diff2 = x[:, 2:, :] - x[:, :-2, :]  # [B, L-2, N]
         
-        # 计算统计特征（只保留均值）
+        # Calculate statistical features (only keep mean)
         mean_diff1 = diff1.mean(dim=1, keepdim=True)  # [B, 1, N]
         mean_diff2 = diff2.mean(dim=1, keepdim=True)  # [B, 1, N]
         
-        # 拼接小波特征（减少特征数量）
+        # Concatenate wavelet features (reduce feature count)
         wavelet_features = torch.cat([
             mean_diff1,  # [B, 1, N]
             mean_diff2   # [B, 1, N]
@@ -308,86 +448,86 @@ class Model(nn.Module):
         return wavelet_features
 
     def fft_ilt_transform(self, x):
-        """简化的FFT-ILT变换，添加可学习参数矩阵和逆拉普拉斯变换"""
+        """Simplified FFT-ILT transformation with learnable parameter matrices and inverse Laplace transform"""
         # x: [B, L, D] -> [B, L, D]
         B, L, D = x.shape
         
-        # 1. 简单的FFT变换
+        # 1. Simple FFT transformation
         fft_x = torch.fft.fft(x, dim=1)  # [B, L, D]
         
-        # 2. 取实部和虚部
+        # 2. Extract real and imaginary parts
         fft_real = fft_x.real  # [B, L, D]
         fft_imag = fft_x.imag  # [B, L, D]
         
-        # 3. 与可学习的滤波矩阵W相乘
+        # 3. Multiply with learnable filter matrix W
         fft_combined = fft_real + fft_imag  # [B, L, D]
         fft_reshaped = fft_combined.reshape(B * L, D)  # [B*L, D]
         fft_filtered = torch.mm(fft_reshaped, self.fft_filter_W)  # [B*L, D]
         fft_filtered = fft_filtered.reshape(B, L, D)  # [B, L, D]
         
-        # 4. 线性映射
+        # 4. Linear mapping
         fft_mapped = self.ilt_linear(fft_filtered)  # [B, L, D]
         
-        # 5. 逆拉普拉斯变换 (ILT)
-        # 使用可学习参数重建时域信号
-        # 公式: f(t) = Σ A_n * exp(-σ_n * t) * cos(w_n * t + φ_n)
+        # 5. Inverse Laplace Transform (ILT)
+        # Use learnable parameters to reconstruct time domain signal
+        # Formula: f(t) = Σ A_n * exp(-σ_n * t) * cos(w_n * t + φ_n)
         
-        # 创建时间向量
+        # Create time vector
         t = torch.arange(L, dtype=x.dtype, device=x.device).unsqueeze(0).unsqueeze(-1)  # [1, L, 1]
         
-        # 应用可学习的ILT参数
+        # Apply learnable ILT parameters
         A = F.softplus(self.ilt_A.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
         sigma = F.softplus(self.ilt_sigma.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
         w = F.softplus(self.ilt_w.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
         phi = self.ilt_phi.unsqueeze(0).unsqueeze(0)  # [1, 1, D]
         
-        # 计算ILT重建
+        # Calculate ILT reconstruction
         decay = torch.exp(-sigma * t)  # [1, L, D]
         oscillation = torch.cos(w * t + phi)  # [1, L, D]
         ilt_reconstructed = A * decay * oscillation  # [1, L, D]
         
-        # 6. 分别处理分类和回归特征
-        # 分类特征（第1个）- 结合ILT增强
+        # 6. Process classification and regression features separately
+        # Classification features (1st) - combine with ILT enhancement
         class_feature = x[:, :, 0:1]  # [B, L, 1]
         class_fft = fft_mapped[:, :, 0:1]  # [B, L, 1]
         class_ilt = ilt_reconstructed[:, :, 0:1]  # [B, L, 1]
         
-        # 分类特征增强（结合FFT和ILT）
+        # Classification feature enhancement (combine FFT and ILT)
         class_enhanced = class_feature + torch.tanh(class_fft) + 0.2 * class_ilt
         
-        # 回归特征（第2-39个）- 结合ILT
+        # Regression features (2nd-39th) - combine with ILT
         reg_features = x[:, :, 1:]  # [B, L, D-1]
         reg_fft = fft_mapped[:, :, 1:]  # [B, L, D-1]
         reg_ilt = ilt_reconstructed[:, :, 1:]  # [B, L, D-1]
         
-        # 回归特征处理（结合FFT和ILT）
+        # Regression feature processing (combine FFT and ILT)
         reg_enhanced = reg_features + 0.1 * torch.tanh(reg_fft) + 0.05 * reg_ilt
         
-        # 7. 组合输出
+        # 7. Combine output
         output = torch.cat([class_enhanced, reg_enhanced], dim=-1)  # [B, L, D]
         
         return output
 
     def wavelet_output_transform(self, x):
-        """简化的多尺度小波变换输出，参考fft_ilt_transform结构"""
+        """Simplified multi-scale wavelet transformation output, referencing fft_ilt_transform structure"""
         # x: [B, L, D] -> [B, L, D]
         B, L, D = x.shape
         
-        # 1. 多尺度小波分解（简化版本）
+        # 1. Multi-scale wavelet decomposition (simplified version)
         wavelet_features = []
         current_signal = x
         
-        for scale in range(min(self.wavelet_scales, 3)):  # 限制最大尺度数
-            if current_signal.shape[1] >= 4:  # 确保有足够的数据点
-                # 确保序列长度为偶数
+        for scale in range(min(self.wavelet_scales, 3)):  # Limit maximum number of scales
+            if current_signal.shape[1] >= 4:  # Ensure sufficient data points
+                # Ensure sequence length is even
                 if current_signal.shape[1] % 2 == 1:
                     current_signal = torch.cat([current_signal, current_signal[:, -1:, :]], dim=1)
                 
-                # Haar小波分解
+                # Haar wavelet decomposition
                 approx = (current_signal[:, ::2, :] + current_signal[:, 1::2, :]) / 2.0
                 detail = (current_signal[:, ::2, :] - current_signal[:, 1::2, :]) / 2.0
                 
-                # 收集特征
+                # Collect features
                 wavelet_features.append(approx)
                 wavelet_features.append(detail)
                 
@@ -395,9 +535,9 @@ class Model(nn.Module):
             else:
                 break
         
-        # 2. 特征融合
+        # 2. Feature fusion
         if wavelet_features:
-            # 将所有尺度特征插值到原始长度
+            # Interpolate all scale features to original length
             interpolated_features = []
             for feat in wavelet_features:
                 if feat.shape[1] != L:
@@ -411,72 +551,72 @@ class Model(nn.Module):
                     feat_interp = feat
                 interpolated_features.append(feat_interp)
             
-            # 平均所有尺度特征
+            # Average all scale features
             wavelet_combined = torch.stack(interpolated_features, dim=0).mean(dim=0)  # [B, L, D]
         else:
             wavelet_combined = x
         
-        # 3. 应用可学习的变换
-        # 重塑并应用滤波矩阵
+        # 3. Apply learnable transformation
+        # Reshape and apply filter matrix
         wavelet_reshaped = wavelet_combined.reshape(B * L, D)  # [B*L, D]
         wavelet_filtered = torch.mm(wavelet_reshaped, self.wavelet_filter_W)  # [B*L, D]
         wavelet_filtered = wavelet_filtered.reshape(B, L, D)  # [B, L, D]
         
-        # 线性映射
+        # Linear mapping
         wavelet_mapped = self.wavelet_linear(wavelet_filtered)  # [B, L, D]
         
-        # 4. 应用可学习的小波重建参数
+        # 4. Apply learnable wavelet reconstruction parameters
         A = F.softplus(self.wavelet_A.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
         scale = F.softplus(self.wavelet_scale.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
         shift = torch.tanh(self.wavelet_shift.unsqueeze(0).unsqueeze(0))  # [1, 1, D]
         
-        # 应用变换
+        # Apply transformation
         wavelet_reconstructed = A * torch.tanh(scale * wavelet_mapped + shift)  # [B, L, D]
         
-        # 5. 分别处理分类和回归特征
-        # 分类特征（第1个）- 结合小波增强
+        # 5. Process classification and regression features separately
+        # Classification features (1st) - combine with wavelet enhancement
         class_feature = x[:, :, 0:1]  # [B, L, 1]
         class_wavelet = wavelet_reconstructed[:, :, 0:1]  # [B, L, 1]
         
-        # 分类特征增强（结合原始特征和小波特征）
+        # Classification feature enhancement (combine original features and wavelet features)
         class_enhanced = class_feature + torch.tanh(class_wavelet)
         
-        # 回归特征（第2-39个）- 结合小波
+        # Regression features (2nd-39th) - combine with wavelet
         reg_features = x[:, :, 1:]  # [B, L, D-1]
         reg_wavelet = wavelet_reconstructed[:, :, 1:]  # [B, L, D-1]
         
-        # 回归特征处理（结合原始特征和小波特征）
+        # Regression feature processing (combine original features and wavelet features)
         reg_enhanced = reg_features + 0.1 * torch.tanh(reg_wavelet)
         
-        # 6. 组合输出
+        # 6. Combine output
         output = torch.cat([class_enhanced, reg_enhanced], dim=-1)  # [B, L, D]
         
         return output
 
     def exo_rbf_transform(self, x):
-        """为exogenous_x应用RBF变换，先插值再提取RBF特征（高效向量化版本）"""
+        """Apply RBF transformation to exogenous_x, interpolate first then extract RBF features (efficient vectorized version)"""
         # x: [B, L, N] -> [B, L, N]
         B, L, N = x.shape
         
-        # 获取RBF中心点
+        # Get RBF centers
         if hasattr(self, 'exo_rbf_centers_param'):
             rbf_centers = self.exo_rbf_centers_param
         else:
             rbf_centers = self.exo_rbf_centers_buffer
         
-        # 创建原始缺失值掩码（0值表示缺失）
+        # Create original missing value mask (0 values indicate missing)
         original_mask = (x == 0).float()  # [B, L, N]
         
-        # 快速插值：使用前向填充和后向填充的组合
+        # Fast interpolation: use combination of forward fill and backward fill
         x_interpolated = x.clone()
         
-        # 重塑为 [B*N, L] 进行批量处理
+        # Reshape to [B*N, L] for batch processing
         x_reshaped = x.reshape(B * N, L)  # [B*N, L]
         
-        # 创建缺失值掩码
+        # Create missing value mask
         missing_mask = (x_reshaped == 0)  # [B*N, L]
         
-        # 前向填充
+        # Forward fill
         x_forward = x_reshaped.clone()
         for i in range(1, L):
             x_forward[:, i] = torch.where(
@@ -485,7 +625,7 @@ class Model(nn.Module):
                 x_forward[:, i]
             )
         
-        # 后向填充
+        # Backward fill
         x_backward = x_reshaped.clone()
         for i in range(L-2, -1, -1):
             x_backward[:, i] = torch.where(
@@ -494,20 +634,20 @@ class Model(nn.Module):
                 x_backward[:, i]
             )
         
-        # 取前向和后向填充的平均值
+        # Take average of forward and backward fill
         x_interpolated_reshaped = (x_forward + x_backward) / 2
         
-        # 恢复原始形状
+        # Restore original shape
         x_interpolated = x_interpolated_reshaped.view(B, L, N)
         
-        # 向量化RBF变换
+        # Vectorized RBF transformation
         # [B, L, N, 1] - [rbf_centers] -> [B, L, N, rbf_centers]
         distances = x_interpolated.unsqueeze(-1) - rbf_centers.unsqueeze(0).unsqueeze(0).unsqueeze(0)
         
-        # 应用RBF核函数
+        # Apply RBF kernel function
         rbf_output = torch.exp(-self.exo_rbf_gamma * distances ** 2)  # [B, L, N, rbf_centers]
         
-        # 对RBF中心维度求平均
+        # Average over RBF center dimensions
         rbf_features = rbf_output.mean(dim=-1)  # [B, L, N]
         
         return rbf_features, original_mask
@@ -541,114 +681,123 @@ class Model(nn.Module):
         endo_embed, attns = self.en_encoder(endo_embed, attn_mask=None)
         endo_embed = endo_embed[:, 0, :].unsqueeze(1)  # B, 1, d_model, global token
     
-        # 对MODIS数据应用RBF变换
-        exo_modis, original_mask_tensor = self.exo_rbf_transform(exogenous_x[:, :, 19:])  # [B, L, 18]
-        exogenous_x = torch.cat([exogenous_x[:, :, :20], exo_modis], dim=2)
+        # Apply RBF transformation to MODIS data
+        # exo_modis, original_mask_tensor = self.exo_rbf_transform(exogenous_x[:, :, 19:])  # [B, L, 18]
+        # exogenous_x = torch.cat([exogenous_x[:, :, :20], exo_modis], dim=2)
         
-        # 对ERA5和RBF后的MODIS数据应用傅里叶变换和小波变换，并提取特征拼接输入模型
+        # Apply Fourier transform and wavelet transform to ERA5 and RBF-processed MODIS data, and extract features to concatenate as model input
         enc_out = self.enc_embedding(exogenous_x, x_mark_enc)
-        exo_weather = enc_out[:, :, 0:12]  # ERA5数据 (前12个变量)
-        exo_modis_rbf = enc_out[:, :, 19:]  # RBF处理后的MODIS数据
+        exo_weather = enc_out[:, :, 0:12]  # ERA5 data (first 12 variables)
+        exo_modis_rbf = enc_out[:, :, 19:]  # RBF-processed MODIS data
         
         if self.fourier_as_features:
-            # 对ERA5和MODIS数据分别进行傅里叶变换, 并提取特征拼接输入模型
-            # 应用傅里叶变换
+            # Apply Fourier transform to ERA5 and MODIS data separately, and extract features to concatenate as model input
+            # Apply Fourier transform
             fourier_weather = self.fourier_transform_features(exo_weather)  # [B, 8, 12]
             fourier_modis = self.fourier_transform_features(exo_modis_rbf)  # [B, 8, 18]
             
-            # 应用小波变换
+            # Apply wavelet transform
             wavelet_weather = self.wavelet_transform_features(exo_weather)  # [B, 6, 12]
             wavelet_modis = self.wavelet_transform_features(exo_modis_rbf)  # [B, 6, 18]
             
-            # 将变换特征与原始数据拼接
-            # 原始数据: [B, L, 38] (20个原始变量 + 18个RBF特征)
-            # 傅里叶特征: [B, 4, 30] (4个特征 × 30个变量)
-            # 小波特征: [B, 2, 30] (2个特征 × 30个变量)
+            # Concatenate transformed features with original data
+            # Original data: [B, L, 38] (20 original variables + 18 RBF features)
+            # Fourier features: [B, 4, 30] (4 features × 30 variables)
+            # Wavelet features: [B, 2, 30] (2 features × 30 variables)
             
-            # 拼接傅里叶特征
+            # Concatenate Fourier features
             fourier_combined = torch.cat([fourier_weather, fourier_modis], dim=2)  # [B, 4, 30]
-            # 将傅里叶特征扩展到时间维度
+            # Expand Fourier features to time dimension
             fourier_expanded = fourier_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 4, 30]
             fourier_expanded = fourier_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 120]
             
-            # 拼接小波特征
+            # Concatenate wavelet features
             wavelet_combined = torch.cat([wavelet_weather, wavelet_modis], dim=2)  # [B, 2, 30]
-            # 将小波特征扩展到时间维度
+            # Expand wavelet features to time dimension
             wavelet_expanded = wavelet_combined.unsqueeze(1).expand(-1, exogenous_x.shape[1], -1, -1)  # [B, L, 2, 30]
             wavelet_expanded = wavelet_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 60]
             
-            # 最终拼接：原始数据 + 傅里叶特征 + 小波特征。不使用小波和傅里叶，注释掉这行就可以了
+            # Final concatenation: original data + Fourier features + wavelet features. To disable wavelet and Fourier, comment out this line
             enc_out = torch.cat([exogenous_x, wavelet_expanded, fourier_expanded], dim=2)  
         elif self.fft_ifft:
-            # 对ERA5和MODIS数据分别进行傅里叶变换，并应用可学习的频率域变换矩阵，逆傅里叶变换回时间域，替换回原始位置
-            # exo_weather: [B, L, 12], exo_modis_rbf: [B, L, N] (N可能变化)
+            # Apply Fourier transform to ERA5 and MODIS data separately, apply learnable frequency domain transformation matrices, inverse Fourier transform back to time domain, replace back to original positions
+            # exo_weather: [B, L, 12], exo_modis_rbf: [B, L, N] (N may vary)
             
-            # 动态检测MODIS数据维度
+            # Dynamically detect MODIS data dimensions
             modis_dim = exo_modis_rbf.shape[-1]
             
-            # 傅里叶变换到频率域
+            # Fourier transform to frequency domain
             fft_weather = torch.fft.fft(exo_weather, dim=1)  # [B, L, 12]
             fft_modis = torch.fft.fft(exo_modis_rbf, dim=1)  # [B, L, N]
             
-            # 应用可学习的频率域变换（使用幅度和相位）
-            # 对ERA5数据
+            # Apply learnable frequency domain transformation (using magnitude and phase)
+            # For ERA5 data
             magnitude_weather = torch.abs(fft_weather)  # [B, L, 12]
             phase_weather = torch.angle(fft_weather)    # [B, L, 12]
             
-            # 应用可学习的幅度和相位变换
+            # Apply learnable magnitude and phase transformation
             magnitude_weather_transformed = magnitude_weather * torch.sigmoid(self.freq_transform_weather_mag.unsqueeze(0).unsqueeze(0))
             phase_weather_transformed = phase_weather + self.freq_transform_weather_phase.unsqueeze(0).unsqueeze(0)
             
-            # 重建复数
+            # Reconstruct complex numbers
             fft_weather_transformed = magnitude_weather_transformed * torch.exp(1j * phase_weather_transformed)
             
-            # 对MODIS数据 - 使用动态调整的参数
+            # For MODIS data - use dynamically adjusted parameters
             magnitude_modis = torch.abs(fft_modis)  # [B, L, N]
             phase_modis = torch.angle(fft_modis)    # [B, L, N]
             
-            # 动态调整变换参数维度
+            # Dynamically adjust transformation parameter dimensions
             if modis_dim <= self.max_modis_dim:
-                # 使用前N个参数
+                # Use first N parameters
                 mag_params = self.freq_transform_modis_mag[:modis_dim]
                 phase_params = self.freq_transform_modis_phase[:modis_dim]
             else:
-                # 如果超出最大维度，使用插值
+                # If exceeding maximum dimension, use interpolation
                 indices = torch.linspace(0, self.max_modis_dim-1, modis_dim, device=self.freq_transform_modis_mag.device)
                 mag_params = torch.interp(indices, torch.arange(self.max_modis_dim, device=self.freq_transform_modis_mag.device), self.freq_transform_modis_mag)
                 phase_params = torch.interp(indices, torch.arange(self.max_modis_dim, device=self.freq_transform_modis_phase.device), self.freq_transform_modis_phase)
             
-            # 应用可学习的幅度和相位变换
+            # Apply learnable magnitude and phase transformation
             magnitude_modis_transformed = magnitude_modis * torch.sigmoid(mag_params.unsqueeze(0).unsqueeze(0))
             phase_modis_transformed = phase_modis + phase_params.unsqueeze(0).unsqueeze(0)
             
-            # 重建复数
+            # Reconstruct complex numbers
             fft_modis_transformed = magnitude_modis_transformed * torch.exp(1j * phase_modis_transformed)
             
-            # 逆傅里叶变换回时间域
+            # Inverse Fourier transform back to time domain
             exo_weather_transformed = torch.fft.ifft(fft_weather_transformed, dim=1).real  # [B, L, 12]
             exo_modis_transformed = torch.fft.ifft(fft_modis_transformed, dim=1).real  # [B, L, N]
             
-            # 将变换后的数据替换回原始位置（避免原地操作）
+            # Replace transformed data back to original positions (avoid in-place operations)
             enc_out_transformed = enc_out.clone()
-            enc_out_transformed[:, :, :12] = exo_weather_transformed  # 替换ERA5数据
-            enc_out_transformed[:, :, 19:] = exo_modis_transformed     # 替换MODIS数据
+            enc_out_transformed[:, :, :12] = exo_weather_transformed  # Replace ERA5 data
+            enc_out_transformed[:, :, 19:] = exo_modis_transformed     # Replace MODIS data
             
             enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
         elif self.affirm_transform:
             enc_out_weather = self.affirm_adaptive_filter(exo_weather)
             enc_out_modis = self.affirm_adaptive_filter(exo_modis_rbf)
-            # 避免原地操作，使用clone()
+            # Avoid in-place operations, use clone()
+            enc_out_transformed = enc_out.clone()
+            enc_out_transformed[:, :, 0:12] = enc_out_weather
+            enc_out_transformed[:, :, 19:] = enc_out_modis
+            enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
+        elif self.wavelet_transform:
+            # Use adaptive wavelet filtering
+            enc_out_weather = self.adaptive_wavelet_filter(exo_weather)
+            enc_out_modis = self.adaptive_wavelet_filter(exo_modis_rbf)
+            # Avoid in-place operations, use clone()
             enc_out_transformed = enc_out.clone()
             enc_out_transformed[:, :, 0:12] = enc_out_weather
             enc_out_transformed[:, :, 19:] = enc_out_modis
             enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
         else:
-            # 默认情况：直接拼接
+            # Default case: direct concatenation
             enc = torch.cat([endo_embed, enc_out], dim=1)
         
         enc_out, attns = self.encoder(enc, attn_mask=None)
         
-        # 应用FFT-ILT变换到encoder输出
+        # Apply FFT-ILT transformation to encoder output
         if self.fft_ilt:
             enc_out = self.fft_ilt_transform(enc_out)  # [B, L, D]
         elif self.wavelet_output:

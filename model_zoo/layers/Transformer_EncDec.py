@@ -145,6 +145,96 @@ class GatedMoE(nn.Module):
         return output
 
 
+class TopKFeatureMoE(nn.Module):
+    """
+    Top-K Feature Selection MoE: Select top-k most important features and process them with fewer experts
+    """
+    def __init__(self, d_model, d_ff, num_features, num_experts=None, top_k=None, dropout=0.1):
+        super(TopKFeatureMoE, self).__init__()
+        self.num_features = num_features
+        self.num_experts = num_experts or (num_features // 2)  # Default: half of features
+        self.top_k = top_k or (num_features // 2)  # Default: use half of features
+        
+        # Feature importance scoring network
+        self.feature_importance = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, 1)
+        )
+        
+        # Experts (fewer than original features)
+        self.experts = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model, d_ff),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_ff, d_model)
+            ) for _ in range(self.num_experts)
+        ])
+        
+        # Expert selection gate (for selected features)
+        self.expert_gate = nn.Linear(d_model, self.num_experts)
+        
+        # Feature reconstruction network (to handle unselected features)
+        self.feature_reconstructor = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, d_model)
+        )
+        
+    def forward(self, x):
+        # x: [B, N, D] - batch, features, d_model
+        B, N, D = x.shape
+        
+        # 1. Calculate feature importance scores
+        feature_importance = self.feature_importance(x)  # [B, N, 1]
+        feature_scores = feature_importance.squeeze(-1)  # [B, N]
+        
+        # 2. Select top-k most important features
+        topk_scores, topk_idx = torch.topk(feature_scores, self.top_k, dim=-1)  # [B, top_k]
+        
+        # 3. Create feature selection mask
+        feature_mask = torch.zeros(B, N, device=x.device, dtype=torch.bool)
+        feature_mask.scatter_(1, topk_idx, True)  # [B, N]
+        
+        # 4. Process selected features with experts
+        selected_features = x * feature_mask.unsqueeze(-1).float()  # [B, N, D]
+        
+        # 5. Apply expert selection for selected features
+        expert_scores = torch.softmax(self.expert_gate(selected_features), dim=-1)  # [B, N, E]
+        
+        # 6. Compute expert outputs
+        expert_outputs = torch.stack([expert(selected_features) for expert in self.experts], dim=0)  # [E, B, N, D]
+        
+        # 7. Weighted combination of expert outputs
+        expert_outputs_weighted = torch.zeros_like(selected_features)  # [B, N, D]
+        for i, expert_output in enumerate(expert_outputs):
+            expert_outputs_weighted += expert_output * expert_scores[:, :, i:i+1]  # [B, N, D]
+        
+        # 8. Handle unselected features with reconstruction network
+        unselected_features = x * (~feature_mask).unsqueeze(-1).float()  # [B, N, D]
+        reconstructed_features = self.feature_reconstructor(unselected_features)  # [B, N, D]
+        
+        # 9. Combine selected and reconstructed features
+        output = expert_outputs_weighted + reconstructed_features
+        
+        return output
+    
+    def get_feature_importance(self, x):
+        """Get feature importance scores for analysis"""
+        feature_importance = self.feature_importance(x)  # [B, N, 1]
+        return feature_importance.squeeze(-1)  # [B, N]
+    
+    def get_selected_features(self, x):
+        """Get which features are selected for analysis"""
+        feature_importance = self.feature_importance(x)  # [B, N, 1]
+        feature_scores = feature_importance.squeeze(-1)  # [B, N]
+        _, topk_idx = torch.topk(feature_scores, self.top_k, dim=-1)  # [B, top_k]
+        return topk_idx
+
+
 class EncoderLayer(nn.Module):
     def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu", num_experts=4, top_k=2, moe_active=False, multi_variate=False):
         super(EncoderLayer, self).__init__()
@@ -160,9 +250,20 @@ class EncoderLayer(nn.Module):
         self.multi_variate = multi_variate
         
         self.moe_active = moe_active
+        self.feature_moe_active = False
+        
         self.moe = GatedMoE(d_model=d_model, d_ff=d_ff, num_experts=num_experts, top_k=top_k, dropout=dropout)
-
-
+        
+                # Top-K Feature MoE
+        self.feature_moe = TopKFeatureMoE(
+            d_model=d_model,
+            d_ff=d_ff,
+            num_features=39,  # 39 features in total
+            num_experts=num_experts,
+            top_k=top_k,
+            dropout=dropout
+        )
+        
     def forward(self, x, attn_mask=None, tau=None, delta=None):
         # x: [B, N, D]
         if self.multi_variate:
@@ -178,7 +279,6 @@ class EncoderLayer(nn.Module):
                 attn_mask=attn_mask,
                 tau=tau, delta=delta
             )
-        
         x = x + self.dropout(new_x)
         y = x = self.norm1(x)
         
@@ -187,9 +287,14 @@ class EncoderLayer(nn.Module):
             # y = self.dropout(y)
             y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
             y = self.dropout(self.conv2(y).transpose(-1, 1))
+        elif self.feature_moe_active:
+            # Top-K Feature MoE
+            y = self.feature_moe(x)
+            y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+            y = self.dropout(self.conv2(y).transpose(-1, 1))
         
         else:
             y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
             y = self.dropout(self.conv2(y).transpose(-1, 1))
-
+        
         return self.norm2(x + y), attn
