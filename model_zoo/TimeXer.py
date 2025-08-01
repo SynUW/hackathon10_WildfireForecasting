@@ -49,7 +49,21 @@ class EnEmbedding(nn.Module):
     def forward(self, x):
         # do patching
         n_vars = x.shape[1]
-        glb = self.glb_token.repeat((x.shape[0], 1, 1))
+        # glb_token shape: [1, n_vars, 1, d_model] where n_vars is the number of variables
+        # We need to repeat it to match batch size and expand to match the actual n_vars
+        glb = self.glb_token.repeat((x.shape[0], 1, 1, 1))  # [B, n_vars, 1, d_model]
+        # If the actual n_vars doesn't match the initialized n_vars, we need to adjust
+        if glb.shape[1] != n_vars:
+            # Repeat or slice glb to match the actual n_vars
+            if glb.shape[1] < n_vars:
+                # Repeat glb to match n_vars
+                repeat_times = (n_vars + glb.shape[1] - 1) // glb.shape[1]
+                glb = glb.repeat(1, repeat_times, 1, 1)
+                glb = glb[:, :n_vars, :, :]
+            else:
+                # Slice glb to match n_vars
+                glb = glb[:, :n_vars, :, :]
+        
         # [B, N, L] -> [B, N, L/patch_len, patch_len]
         x = x.unfold(dimension=-1, size=self.patch_len, step=self.patch_len)
 
@@ -63,10 +77,9 @@ class EnEmbedding(nn.Module):
         x = torch.reshape(x, (-1, n_vars, x.shape[-2], x.shape[-1]))
 
         # [B, N, L/patch_len, d_model] -> [B, N, L/patch_len+1, d_model]
-        # serise-level global token is added to the last position
-        # 调整glb的形状以匹配x
-        glb_expanded = glb.unsqueeze(1).expand(-1, n_vars, -1, -1)  # [B, N, 1, d_model]
-        x = torch.cat([x, glb_expanded], dim=2)
+        # series-level global token is added to the last position
+        # glb is already [B, n_vars, 1, d_model], so we can directly concatenate
+        x = torch.cat([x, glb], dim=2)
         
         x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
         return self.dropout(x), n_vars
@@ -311,8 +324,8 @@ if __name__ == "__main__":
     )
     model = Model(configs)
     # 修复测试数据：使序列长度大于patch_len，并调整维度顺序
-    x_enc = torch.randn(1, 39, 365)  # [batch, seq_len, features] - 正确的格式
-    x_mark_enc = torch.randn(1, 7, 365)  # [batch, seq_len, time_features]
+    x_enc = torch.randn(1, 365, 39)  # [batch, seq_len, features] - 正确的格式
+    x_mark_enc = torch.randn(1, 365, 7)  # [batch, seq_len, time_features]
     x_dec = torch.randn(1, 1, 39)  # [batch, pred_len, features]
     x_mark_dec = torch.randn(1, 1, 7)  # [batch, pred_len, time_features]
     

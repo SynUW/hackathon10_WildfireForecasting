@@ -59,7 +59,7 @@ class Model(nn.Module):
                                         output_attention=False),
                         configs.d_model, configs.n_heads),
                     configs.d_model,
-                    configs.c_out,
+                    configs.enc_in,  # Use enc_in to match input dimension
                     configs.d_ff,
                     moving_avg=configs.moving_avg,
                     dropout=configs.dropout,
@@ -68,14 +68,16 @@ class Model(nn.Module):
                 for l in range(configs.d_layers)
             ],
             norm_layer=my_Layernorm(configs.d_model),
-            projection=nn.Linear(configs.d_model, configs.c_out, bias=True)
+            projection=nn.Linear(configs.d_model, configs.enc_in, bias=True)  # Use enc_in to match input dimension
         )
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec,
                 enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
         # decomp init
+        # x_enc: B L N
         mean = torch.mean(x_enc, dim=1).unsqueeze(1).repeat(1, self.pred_len, 1)
-        zeros = torch.zeros([x_dec.shape[0], self.pred_len, x_dec.shape[2]], device=x_enc.device)
+        # Fix: Use x_enc.shape[2] instead of x_dec.shape[2] to match the input dimension
+        zeros = torch.zeros([x_dec.shape[0], self.pred_len, x_enc.shape[2]], device=x_enc.device)
         seasonal_init, trend_init = self.decomp(x_enc)
         # decoder input
         trend_init = torch.cat([trend_init[:, -self.label_len:, :], mean], dim=1)

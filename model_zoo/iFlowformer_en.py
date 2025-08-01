@@ -677,18 +677,22 @@ class Model(nn.Module):
         endogenous_x = x_enc[:, :, 0].unsqueeze(-1).permute(0, 2, 1)
         exogenous_x = x_enc[:, :, 1:]
         
-        endo_embed, n_vars = self.en_embedding(endogenous_x)
-        endo_embed, attns = self.en_encoder(endo_embed, attn_mask=None)
-        endo_embed = endo_embed[:, 0, :].unsqueeze(1)  # B, 1, d_model, global token
-    
+        # vendo_embed, n_vars = self.en_embedding(endogenous_x)
+        # endo_embed, attns = self.en_encoder(endo_embed, attn_mask=None)
+        # endo_embed = endo_embed[:, 0, :].unsqueeze(1)  # B, 1, d_model, global token
+                    
         # Apply RBF transformation to MODIS data
-        # exo_modis, original_mask_tensor = self.exo_rbf_transform(exogenous_x[:, :, 19:])  # [B, L, 18]
-        # exogenous_x = torch.cat([exogenous_x[:, :, :20], exo_modis], dim=2)
+        exo_modis, original_mask_tensor = self.exo_rbf_transform(exogenous_x[:, :, 19:])  # [B, L, 18]
+        exogenous_x = torch.cat([exogenous_x[:, :, :19], exo_modis], dim=2)
         
         # Apply Fourier transform and wavelet transform to ERA5 and RBF-processed MODIS data, and extract features to concatenate as model input
-        enc_out = self.enc_embedding(exogenous_x, x_mark_enc)
-        exo_weather = enc_out[:, :, 0:12]  # ERA5 data (first 12 variables)
-        exo_modis_rbf = enc_out[:, :, 19:]  # RBF-processed MODIS data
+        # enc_out = self.enc_embedding(torch.cat([endogenous_x.permute(0, 2, 1), exogenous_x], dim=2), x_mark_enc)
+        enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        # 当enc_embedding内是x_enc时，ex0_weather是前12个变量；但当x_enc是endogenous_x时，exo_weather是1-13个变量
+        # exo_weather = enc_out[:, :, 0:12]  # ERA5 data (first 12 variables)
+        # exo_modis_rbf = enc_out[:, :, 19:]  # RBF-processed MODIS data
+        exo_weather = enc_out[:, :, 1:13]
+        exo_modis_rbf = enc_out[:, :, 20:]
         
         if self.fourier_as_features:
             # Apply Fourier transform to ERA5 and MODIS data separately, and extract features to concatenate as model input
@@ -718,7 +722,9 @@ class Model(nn.Module):
             wavelet_expanded = wavelet_expanded.reshape(exogenous_x.shape[0], exogenous_x.shape[1], -1)  # [B, L, 60]
             
             # Final concatenation: original data + Fourier features + wavelet features. To disable wavelet and Fourier, comment out this line
-            enc_out = torch.cat([exogenous_x, wavelet_expanded, fourier_expanded], dim=2)  
+            # 如果enc_embedding内是x_enc时，则不需要catendo_embed
+            # enc_out = torch.cat([endo_embed, enc_out, wavelet_expanded, fourier_expanded], dim=2)  
+            enc_out = torch.cat([enc_out, wavelet_expanded, fourier_expanded], dim=2)  
         elif self.fft_ifft:
             # Apply Fourier transform to ERA5 and MODIS data separately, apply learnable frequency domain transformation matrices, inverse Fourier transform back to time domain, replace back to original positions
             # exo_weather: [B, L, 12], exo_modis_rbf: [B, L, N] (N may vary)
@@ -770,8 +776,10 @@ class Model(nn.Module):
             
             # Replace transformed data back to original positions (avoid in-place operations)
             enc_out_transformed = enc_out.clone()
-            enc_out_transformed[:, :, :12] = exo_weather_transformed  # Replace ERA5 data
-            enc_out_transformed[:, :, 19:] = exo_modis_transformed     # Replace MODIS data
+            # enc_out_transformed[:, :, :12] = exo_weather_transformed  # Replace ERA5 data
+            # enc_out_transformed[:, :, 19:] = exo_modis_transformed     # Replace MODIS data
+            enc_out_transformed[:, :, 1:13] = exo_weather_transformed  # Replace ERA5 data
+            enc_out_transformed[:, :, 20:] = exo_modis_transformed     # Replace MODIS data
             
             enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
         elif self.affirm_transform:
@@ -779,8 +787,10 @@ class Model(nn.Module):
             enc_out_modis = self.affirm_adaptive_filter(exo_modis_rbf)
             # Avoid in-place operations, use clone()
             enc_out_transformed = enc_out.clone()
-            enc_out_transformed[:, :, 0:12] = enc_out_weather
-            enc_out_transformed[:, :, 19:] = enc_out_modis
+            # enc_out_transformed[:, :, 0:12] = enc_out_weather
+            # enc_out_transformed[:, :, 19:] = enc_out_modis
+            enc_out_transformed[:, :, 1:13] = enc_out_weather
+            enc_out_transformed[:, :, 20:] = enc_out_modis
             enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
         elif self.wavelet_transform:
             # Use adaptive wavelet filtering
@@ -788,12 +798,16 @@ class Model(nn.Module):
             enc_out_modis = self.adaptive_wavelet_filter(exo_modis_rbf)
             # Avoid in-place operations, use clone()
             enc_out_transformed = enc_out.clone()
-            enc_out_transformed[:, :, 0:12] = enc_out_weather
-            enc_out_transformed[:, :, 19:] = enc_out_modis
+            # enc_out_transformed[:, :, 0:12] = enc_out_weather
+            # enc_out_transformed[:, :, 19:] = enc_out_modis
+            enc_out_transformed[:, :, 1:13] = enc_out_weather
+            enc_out_transformed[:, :, 20:] = enc_out_modis
             enc = torch.cat([endo_embed, enc_out_transformed], dim=1)
         else:
             # Default case: direct concatenation
-            enc = torch.cat([endo_embed, enc_out], dim=1)
+            # enc = torch.cat([endo_embed, enc_out], dim=1)
+            enc = enc_out
+
         
         enc_out, attns = self.encoder(enc, attn_mask=None)
         

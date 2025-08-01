@@ -146,14 +146,23 @@ class Model(nn.Module):
 
         # You can set the number of SCINet stacks by argument "d_layers", but should choose 1 or 2.
         self.num_stacks = configs.d_layers
+        
+        # 🔥 Fix: Output only base channels (39), not all input channels
+        # This ensures output matches target dimensions
+        output_channels = 39  # Always output 39 channels (base channels)
+        
         if self.num_stacks == 1:
             self.sci_net_1 = SCINet(configs.enc_in, current_level=max_levels, dropout=configs.dropout)
             self.projection_1 = nn.Conv1d(self.seq_len, self.seq_len + self.pred_len, kernel_size=1, stride=1, bias=False)
+            # Add final projection to output only base channels
+            self.final_projection = nn.Linear(configs.enc_in, output_channels)
         else:
             self.sci_net_1, self.sci_net_2 = [SCINet(configs.enc_in, current_level=max_levels, dropout=configs.dropout) for _ in range(2)]
             self.projection_1 = nn.Conv1d(self.seq_len, self.pred_len, kernel_size=1, stride=1, bias=False)
             self.projection_2 = nn.Conv1d(self.seq_len+self.pred_len, self.seq_len+self.pred_len,
                                                 kernel_size = 1, bias = False)
+            # Add final projection to output only base channels
+            self.final_projection = nn.Linear(configs.enc_in, output_channels)
 
         # For positional encoding
         self.pe_hidden_size = configs.enc_in
@@ -173,6 +182,8 @@ class Model(nn.Module):
         self.register_buffer('inv_timescales', inv_timescales)
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+        if torch.max(x_enc[:, :, -1]) > 1:
+            x_enc[:, :, -1] = x_enc[:, :, -1] / 1.35
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)  # [B, seq_len+pred_len, C]
             # Only return prediction part, i.e., the last pred_len time steps
@@ -221,6 +232,10 @@ class Model(nn.Module):
         # dec_out = dec_out + \
         #           (means[:, 0, :].unsqueeze(1).repeat(
         #               1, self.pred_len + self.seq_len, 1))
+        
+        # 🔥 Fix: Project to output only base channels (39)
+        dec_out = self.final_projection(dec_out)
+        
         return dec_out
 
     def get_position_encoding(self, x):

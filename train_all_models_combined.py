@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_Focal_withRegressionLoss_withfirms_withoutinoutnorm_withoutmultivariate_withoutmoe_RBF'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_focal_withRegressionLoss_withfirms_baseline'
 
 def print_config_status():
     """Print current configuration status"""
@@ -228,8 +228,8 @@ DATA_CONFIG = {
     'sampling_ratio': 0.3,            # Proportion of data to sample per epoch (0.0-1.0)
     
     # 🔥 New: Position information feature configuration
-    'enable_position_features': False,  # Whether to enable position information feature (default disabled)
-    'raster_size': (278, 130),         # Image size (height, width), used for normalization of position
+    'enable_position_features': False,  # Whether to enable position information feature (default enabled)
+    'raster_size': (278, 130),         # Image size (height, width), used for normalization of position 278, 130 or 130, 278 ????
     
     # 🔥 New: Future weather data feature configuration  
     'enable_future_weather': False,    # Whether to enable future weather data feature (default disabled)
@@ -1669,6 +1669,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             # x_mark_enc: B T 7 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos)
             x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
             x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
+            
             output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)  # B T C
                         
             # Multi-task learning: Predict all 39 channels
@@ -2205,7 +2206,7 @@ def main():
                        help='Gamma parameter for Focal Loss (default: 2.0)')
     
     # Loss function type selection parameter
-    parser.add_argument('--loss-type', type=str, default='focal',  #######################################
+    parser.add_argument('--loss-type', type=str, default='focal',  ####################################### use focal by default
                        choices=['focal', 'kldiv', 'multitask'],
                        help='Type of loss function to use (default: focal)')
     

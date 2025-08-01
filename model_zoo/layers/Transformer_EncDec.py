@@ -153,7 +153,7 @@ class TopKFeatureMoE(nn.Module):
         super(TopKFeatureMoE, self).__init__()
         self.num_features = num_features
         self.num_experts = num_experts or (num_features // 2)  # Default: half of features
-        self.top_k = top_k or (num_features // 2)  # Default: use half of features
+        self.top_k = top_k or 10 # (num_features // 2)  # Default: use half of features
         
         # Feature importance scoring network
         self.feature_importance = nn.Sequential(

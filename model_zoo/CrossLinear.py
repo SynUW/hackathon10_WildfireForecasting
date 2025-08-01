@@ -64,20 +64,20 @@ class Model(nn.Module):
                 configs.pred_len, patch_num, configs.d_model, configs.d_ff, variate_num)
 
     def forecast(self, x_enc):
-        x_enc = x_enc.permute(0, 2, 1)
+        x_enc = x_enc.permute(0, 2, 1) # B L N -> B N L
         # normalization
-        x_obj = x_enc[:, [-1], :] if self.ms else x_enc
-        mean = torch.mean(x_obj, dim=-1, keepdim=True)
-        std = torch.std(x_obj, dim=-1, keepdim=True)
-        x_enc = (x_enc - torch.mean(x_enc, dim=-1, keepdim=True)) / (torch.std(x_enc, dim=-1, keepdim=True) + self.EPS)
+        # x_obj = x_enc[:, [-1], :] if self.ms else x_enc
+        # mean = torch.mean(x_obj, dim=-1, keepdim=True)
+        # std = torch.std(x_obj, dim=-1, keepdim=True)
+        # x_enc = (x_enc - torch.mean(x_enc, dim=-1, keepdim=True)) / (torch.std(x_enc, dim=-1, keepdim=True) + self.EPS)
         # embedding
-        x_obj = x_enc[:, [-1], :] if self.ms else x_enc
+        x_obj = x_enc[:, [0], :] if self.ms else x_enc
         x_obj = self.alpha * x_obj + (1 - self.alpha) * self.correlation_embedding(x_enc)
         x_obj = self.beta * self.value_embedding(x_obj) + (1 - self.beta) * self.pos_embedding
         # head
         y_out = self.head(x_obj)
         # de-normalization
-        y_out = y_out * std + mean
+        # y_out = y_out * std + mean
         y_out = y_out.permute(0, 2, 1)
         return y_out
 

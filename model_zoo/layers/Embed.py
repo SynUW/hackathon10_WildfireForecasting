@@ -100,7 +100,7 @@ class TimeFeatureEmbedding(nn.Module):
         super(TimeFeatureEmbedding, self).__init__()
 
         freq_map = {'h': 4, 't': 5, 's': 6,
-                    'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
+                    'm': 1, 'a': 1, 'w': 2, 'd': 7, 'b': 3}  # 'd' for daily should be 7 (year, month, day, weekday, etc.)
         d_inp = freq_map[freq]
         self.embed = nn.Linear(d_inp, d_model, bias=False)
 
