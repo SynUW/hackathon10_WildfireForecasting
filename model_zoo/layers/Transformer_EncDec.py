@@ -250,7 +250,7 @@ class EncoderLayer(nn.Module):
         self.multi_variate = multi_variate
         
         self.moe_active = moe_active
-        self.feature_moe_active = False
+        self.feature_moe_active = True
         
         self.moe = GatedMoE(d_model=d_model, d_ff=d_ff, num_experts=num_experts, top_k=top_k, dropout=dropout)
         

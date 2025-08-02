@@ -23,7 +23,7 @@ def main():
                        help='输入通道数 (默认: 40, 39基础+1position)')
     parser.add_argument('--output_dir', type=str, default=None, 
                        help='输出目录 (默认: ./{model_name}_shap_results)')
-    parser.add_argument('--num_samples', type=int, default=100, 
+    parser.add_argument('--num_samples', type=int, default=300, 
                        help='样本数量 (默认: 1000)')
     parser.add_argument('--fast_mode', action='store_true',
                        help='启用快速模式（使用梯度近似，适用于小样本）')
