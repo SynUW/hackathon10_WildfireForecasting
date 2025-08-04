@@ -221,6 +221,15 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
         'd_conv': 4,         # For Mamba-related models
         'expand': 2,         # For Mamba-related models
         'distil': True,      # For Informer
+        # I²MoE parameters
+        'use_i2moe': False,  # Whether to use I²MoE
+        'num_experts': 6,    # Number of experts (4 uniqueness + 1 synergy + 1 redundancy)
+        'expert_dropout': 0.1,  # Dropout for experts
+        # Modality configuration
+        'fire_features': (0, 1),      # Fire detection (0, 1 feature)
+        'weather_features': (1, 13),  # ERA5-Land features (1-12, 12 features)
+        'terrain_features': (13, 20), # Terrain features (13-19, 7 features)
+        'modis_features': (20, 39),   # MODIS features (20-38, 19 features)
     }
     
     # Specific model configurations
@@ -241,6 +250,20 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
             'use_norm': True,
             'embed': 'timeF',
             'freq': 'd'
+        },
+        # s_mamba_copy with I²MoE support
+        's_mamba_copy': {
+            'd_model': 1024,  # Same as s_mamba - time series projection dimension
+            'd_ff': 2048,     # Same as s_mamba
+            'e_layers': 2,    # Same as s_mamba
+            'activation': 'gelu',  # Same as s_mamba
+            'use_norm': True,  # Same as s_mamba
+            'embed': 'timeF',  # Same as s_mamba
+            'freq': 'd',       # Same as s_mamba
+            'd_state': 16,     # For Mamba models
+            'use_i2moe': True,  # Enable I²MoE by default
+            'num_experts': 6,
+            'expert_dropout': 0.1
         },
         # Add models missing configurations
         'Nonstationary_Transformer': {

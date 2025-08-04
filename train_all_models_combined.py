@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_focal_withRegressionLoss_itransformer'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_focal_withRegressionLoss_experiments'
 
 def print_config_status():
     """Print current configuration status"""

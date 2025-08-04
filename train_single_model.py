@@ -29,7 +29,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Single model training script')
     parser.add_argument('--model', type=str, required=True, help='Model name, s_mamba, s_mamba_full, ...')
     parser.add_argument('--type', type=str, default='standard', choices=['standard'], help='Model type')
-    parser.add_argument('--gpu', type=int, default=0, help='GPU device number')
+    parser.add_argument('--gpu', type=int, default=1, help='GPU device number')
     parser.add_argument('--log-dir', type=str, default='./trash/smart_parallel_logs_single_model', help='Log directory')
     return parser.parse_args()
 
