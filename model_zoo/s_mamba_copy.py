@@ -403,9 +403,14 @@ class Model(nn.Module):
         )
         # 正确的投影层设计
         if self.use_i2moe:
-            # I²MoE需要特殊的投影层：每个特征独立投影
-            # 输入: [B*N, D] -> 输出: [B*N, pred_len]
-            self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
+            # I²MoE需要特殊的投影层：从多模态特征到预测序列
+            # 输出应该是 [B, pred_len, num_features] 其中 num_features=39
+            self.projector = nn.Sequential(
+                nn.Linear(configs.d_model, configs.d_model * 2),
+                nn.GELU(),
+                nn.Dropout(configs.dropout),
+                nn.Linear(configs.d_model * 2, configs.pred_len * 39)  # 输出 pred_len * 39
+            )
         else:
             # 标准Mamba的投影层
             self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
@@ -440,18 +445,33 @@ class Model(nn.Module):
         # Projection - 正确的I²MoE投影设计
         if self.use_i2moe:
             # I²MoE输出: [B, N, D] -> 需要转换为 [B, pred_len, num_features]
-            # 每个特征独立处理，保持特征间的差异性
+            # 保持专家系统的优势：对多模态特征进行聚合
             B, N, D = enc_out.shape
             
-            # 方法1：每个特征独立投影（推荐）
-            # enc_out: [B, 39, D] -> 重塑为 [B*39, D]
-            enc_out_reshaped = enc_out.view(B * N, D)  # [B*39, D]
+            # 加权聚合多模态特征（保持专家权重信息）
+            if hasattr(self, 'last_expert_weights') and self.last_expert_weights is not None:
+                modality_weights = self.last_expert_weights[:, :4]  # [B, 4] 前4个是模态权重
+                # 对每个模态的特征进行加权
+                weighted_features = torch.zeros(B, 4, D, device=enc_out.device, dtype=enc_out.dtype)
+                
+                # 按模态范围聚合特征
+                feature_ranges = [(0, 1), (1, 13), (13, 20), (20, 39)]  # fire, weather, terrain, modis
+                for i, (start, end) in enumerate(feature_ranges):
+                    # 对特征维度求平均，得到每个模态的特征表示
+                    modality_feat = enc_out[:, start:end, :].mean(dim=1)  # [B, D]
+                    weighted_features[:, i, :] = modality_weights[:, i:i+1] * modality_feat
+                
+                # 聚合所有模态特征
+                aggregated_features = weighted_features.sum(dim=1)  # [B, D]
+            else:
+                # 如果没有专家权重，使用简单的平均
+                aggregated_features = enc_out.mean(dim=1)  # [B, D]
             
-            # 对每个特征进行独立投影
-            dec_out_reshaped = self.projector(enc_out_reshaped)  # [B*39, pred_len]
+            # 投影到预测序列
+            dec_out = self.projector(aggregated_features)  # [B, pred_len * num_features]
             
-            # 重塑回 [B, N, pred_len] 然后转置为 [B, pred_len, N]
-            dec_out = dec_out_reshaped.view(B, N, self.pred_len).transpose(1, 2)  # [B, pred_len, 39]
+            # 重塑为 [B, pred_len, num_features] 以匹配损失函数期望
+            dec_out = dec_out.view(B, self.pred_len, 39)  # [B, pred_len, 39]
         else:
             # 标准Mamba: [B, N, D] -> [B, pred_len, N]
             # 参考s_mamba.py的投影逻辑
