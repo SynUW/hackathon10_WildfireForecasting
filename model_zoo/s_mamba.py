@@ -184,7 +184,7 @@ class Model(nn.Module):
         # x_mark_enc = x_mark_enc.unsqueeze(1).repeat(1, seq_len, 1)
         
         dec_out = self.forecast(x_enc, x_mark_enc)
-        return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+        return dec_out[:, -self.pred_len:, :]  # [B, L, N]
     
     
 if __name__ == '__main__':

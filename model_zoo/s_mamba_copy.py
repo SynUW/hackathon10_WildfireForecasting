@@ -36,38 +36,91 @@ class I2MoE(nn.Module):
             modis_features=(20, 39)
         )
         
-        # 创建共享的EncoderLayer结构
-        def create_expert():
+        # 模态范围定义（用于掩码训练）
+        self.modality_ranges = {
+            'fire': (0, 1),
+            'weather': (1, 13),
+            'terrain': (13, 20),
+            'modis': (20, 39)
+        }
+        
+        # 为不同模态设计专门的专家架构
+        def create_fire_expert():
+            # 火灾检测专家：需要快速响应，使用较小的状态空间
             return Encoder([
                 EncoderLayer(
-                    Mamba(
-                        d_model=d_model,
-                        d_state=256,
-                        d_conv=4,
-                        expand=2
-                    ),
-                    Mamba(
-                        d_model=d_model,
-                        d_state=256,
-                        d_conv=4,
-                        expand=2
-                    ),
+                    Mamba(d_model=d_model, d_state=16, d_conv=2, expand=1),
+                    Mamba(d_model=d_model, d_state=16, d_conv=2, expand=1),
+                    d_model, max(d_ff // 2, 64), dropout, activation="gelu"
+                )
+            ])
+        
+        def create_weather_expert():
+            # 天气专家：需要处理复杂的天气模式，使用较大的状态空间
+            return Encoder([
+                EncoderLayer(
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2),
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2),
+                    d_model, d_ff * 2, dropout, activation="gelu"
+                )
+            ])
+        
+        def create_terrain_expert():
+            # 地形专家：相对稳定，使用中等复杂度
+            return Encoder([
+                EncoderLayer(
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2),
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2),
                     d_model, d_ff, dropout, activation="gelu"
                 )
             ])
         
-        # 模态专家：每个模态一个专门专家，内部有Mamba encoder处理组内时序信息
-        self.fire_expert = create_expert()
-        self.weather_expert = create_expert()
-        self.terrain_expert = create_expert()
-        self.modis_expert = create_expert()
+        def create_modis_expert():
+            # MODIS专家：处理遥感数据，需要高精度
+            return Encoder([
+                EncoderLayer(
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2),
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=2),
+                    d_model, int(d_ff * 1.5), dropout, activation="gelu"
+                )
+            ])
         
-        # 交互专家：处理所有特征的全局时序交互，内部有Mamba encoder
-        # 协同性专家：建模模态间的协同效应
-        self.synergy_expert = create_expert()
+        def create_interaction_expert():
+            # 交互专家：需要处理复杂的多模态交互
+            return Encoder([
+                EncoderLayer(
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=3),
+                    Mamba(d_model=d_model, d_state=16, d_conv=4, expand=3),
+                    d_model, int(d_ff * 3), dropout, activation="gelu"
+                )
+            ])
         
-        # 冗余性专家：建模模态间的冗余信息
-        self.redundancy_expert = create_expert()
+        # 模态专家：每个模态使用专门的架构
+        self.fire_expert = create_fire_expert()
+        self.weather_expert = create_weather_expert()
+        self.terrain_expert = create_terrain_expert()
+        self.modis_expert = create_modis_expert()
+        
+        # 交互专家：使用更复杂的架构处理多模态交互
+        self.synergy_expert = create_interaction_expert()
+        self.redundancy_expert = create_interaction_expert()
+        
+        # 改进的交互权重门控 - 使用注意力机制
+        self.modality_attention = nn.MultiheadAttention(
+            embed_dim=d_model, 
+            num_heads=8, 
+            dropout=dropout,
+            batch_first=True
+        )
+        
+        # 模态重要性评估网络
+        self.modality_importance = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.LayerNorm(d_model // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, 1)
+        )
         
         # 交互权重门控 - 基于模态间的差异计算交互重要性
         self.interaction_gate = nn.Sequential(
@@ -77,72 +130,156 @@ class I2MoE(nn.Module):
             nn.Linear(d_model, 2)  # 2个交互专家
         )
         
-    def forward(self, x):
-        # x: [B, N, D] where N is number of features, D is d_model
+    def apply_modality_mask(self, x, mask_ratio=0.3, training=True):
+        """
+        应用模态掩码训练
+        
+        Args:
+            x: 输入数据 [B, L, N]
+            mask_ratio: 掩码比例，默认0.3
+            training: 是否在训练模式
+            
+        Returns:
+            masked_x: 掩码后的数据 [B, L, N]
+            mask_info: 掩码信息，用于记录哪些模态被掩码
+        """
+        if not training or mask_ratio == 0:
+            return x, None
+            
+        B, L, N = x.shape
+        device = x.device
+        
+        # 为每个样本随机选择要掩码的模态
+        mask = torch.rand(B, 4, device=device) < mask_ratio  # [B, 4] 4个模态
+        
+        # 创建掩码后的数据
+        masked_x = x.clone()
+        mask_info = {
+            'fire': mask[:, 0],
+            'weather': mask[:, 1], 
+            'terrain': mask[:, 2],
+            'modis': mask[:, 3]
+        }
+        
+        # 应用智能掩码 - 使用高斯噪声而不是直接置零
+        for i, (name, (start, end)) in enumerate(self.modality_ranges.items()):
+            if mask[:, i].any():
+                # 使用高斯噪声替代直接置零，保持数据分布
+                noise = torch.randn_like(masked_x[:, :, start:end]) * 0.1
+                masked_x[:, :, start:end] = noise
+                
+        return masked_x, mask_info
+        
+    def forward(self, x, mask_ratio=0.0, training=True):
+        """
+        前向传播
+        
+        Args:
+            x: 输入数据 [B, N, D] where N is number of features (39), D is d_model (1024)
+            mask_ratio: 掩码比例，0表示不使用掩码
+            training: 是否在训练模式
+            
+        Returns:
+            output: 输出 [B, N, D]
+            combined_weights: 专家权重 [B, 6]
+            mask_info: 掩码信息（如果使用掩码）
+        """
+        # x: [B, N, D] where N is number of features (39), D is d_model (1024)
         B, N, D = x.shape
         
-        # 1. 模态分割
-        modalities = self.modality_splitter(x.permute(0, 2, 1))  # 需要调整维度
+        # 1. 应用模态掩码（如果启用）
+        masked_x, mask_info = self.apply_modality_mask(x, mask_ratio, training)
         
-        # 2. 模态专家处理 - 每个专家处理对应的模态，内部有Mamba encoder处理组内时序信息
-        fire_output, _ = self.fire_expert(modalities['fire'].permute(0, 2, 1))  # [B, 1, D]
-        weather_output, _ = self.weather_expert(modalities['weather'].permute(0, 2, 1))  # [B, 12, D]
-        terrain_output, _ = self.terrain_expert(modalities['terrain'].permute(0, 2, 1))  # [B, 7, D]
-        modis_output, _ = self.modis_expert(modalities['modis'].permute(0, 2, 1))  # [B, 19, D]
+        # 2. 模态专家处理 - 每个专家处理对应的特征子集
+        # 输入是 [B, N, D] 其中 N=39个特征，D=d_model=1024
+        # 按模态范围分割特征
+        fire_features = masked_x[:, 0:1, :]  # [B, 1, D] - fire特征
+        weather_features = masked_x[:, 1:13, :]  # [B, 12, D] - weather特征
+        terrain_features = masked_x[:, 13:20, :]  # [B, 7, D] - terrain特征
+        modis_features = masked_x[:, 20:39, :]  # [B, 19, D] - modis特征
         
-        # 3. 计算模态特征表示（用于权重计算）
+        # 每个专家处理对应模态的特征
+        fire_output, _ = self.fire_expert(fire_features)  # [B, 1, D]
+        weather_output, _ = self.weather_expert(weather_features)  # [B, 12, D]
+        terrain_output, _ = self.terrain_expert(terrain_features)  # [B, 7, D]
+        modis_output, _ = self.modis_expert(modis_features)  # [B, 19, D]
+        
+        # 4. 计算模态特征表示（用于权重计算）
         fire_feat = fire_output.mean(dim=1)  # [B, D]
         weather_feat = weather_output.mean(dim=1)  # [B, D]
         terrain_feat = terrain_output.mean(dim=1)  # [B, D]
         modis_feat = modis_output.mean(dim=1)  # [B, D]
         
-        # 4. 交互专家处理 - 真正建模模态间的交互
-        # 创建组合输入
-        combined_input = torch.cat([fire_output, weather_output, terrain_output, modis_output], dim=1)  # [B, 39, D]
-        
+        # 5. 交互专家处理 - 真正建模模态间的交互
         # 协同性专家：建模模态间的协同效应
-        synergy_output, _ = self.synergy_expert(combined_input)
+        # 将所有模态的输出拼接在一起
+        all_modalities = torch.cat([fire_output, weather_output, terrain_output, modis_output], dim=1)  # [B, 39, D]
+        synergy_output, _ = self.synergy_expert(all_modalities)
         
         # 冗余性专家：建模模态间的冗余信息
-        redundancy_output, _ = self.redundancy_expert(combined_input)
+        # 计算模态间的相似性矩阵
+        modality_features = torch.stack([fire_output.mean(dim=1), weather_output.mean(dim=1), 
+                                       terrain_output.mean(dim=1), modis_output.mean(dim=1)], dim=1)  # [B, 4, D]
         
-        # 5. 计算权重
+        # 计算相似性矩阵
+        similarity_matrix = torch.bmm(modality_features, modality_features.transpose(1, 2))  # [B, 4, 4]
+        
+        # 基于相似性重新加权模态特征
+        redundancy_weights = torch.softmax(similarity_matrix, dim=-1)  # [B, 4, 4]
+        redundancy_features = torch.bmm(redundancy_weights, modality_features)  # [B, 4, D]
+        
+        # 扩展回特征维度 - 修复维度问题
+        # redundancy_features: [B, 4, D] -> 需要扩展为 [B, N, D]
+        # 对4个模态的特征求平均，然后扩展到所有39个特征
+        redundancy_output = redundancy_features.mean(dim=1, keepdim=True).expand(-1, N, -1)  # [B, N, D]
+        redundancy_output, _ = self.redundancy_expert(redundancy_output)
+        
+        # 6. 计算权重 - 使用改进的注意力机制
+        # 模态特征矩阵 [B, 4, D]
+        modality_features = torch.stack([fire_feat, weather_feat, terrain_feat, modis_feat], dim=1)
+        
+        # 使用多头注意力计算模态间的交互
+        attended_features, attention_weights = self.modality_attention(
+            modality_features, modality_features, modality_features
+        )
+        
+        # 计算每个模态的重要性分数
+        importance_scores = []
+        for i in range(4):
+            score = self.modality_importance(attended_features[:, i, :])  # [B, 1]
+            importance_scores.append(score)
+        
+        # 模态权重 - 基于注意力机制的重要性评估
+        modality_weights = torch.softmax(torch.cat(importance_scores, dim=1), dim=-1)  # [B, 4]
+        
         # 交互权重 - 基于模态间的差异
-        modality_features = torch.cat([fire_feat, weather_feat, terrain_feat, modis_feat], dim=1)  # [B, 4*D]
-        # 计算两个交互专家各自的权重
-        interaction_weights = torch.softmax(self.interaction_gate(modality_features), dim=-1)  # [B, 2]
+        flattened_features = torch.cat([fire_feat, weather_feat, terrain_feat, modis_feat], dim=1)  # [B, 4*D]
+        interaction_weights = torch.softmax(self.interaction_gate(flattened_features), dim=-1)  # [B, 2]
         
-        # 模态权重 - 基于各模态的重要性
-        modality_weights = torch.softmax(torch.stack([
-            fire_feat.mean(dim=1),
-            weather_feat.mean(dim=1),
-            terrain_feat.mean(dim=1),
-            modis_feat.mean(dim=1)
-        ], dim=1), dim=-1)  # [B, 4]
+        # 7. 加权组合
+        # 将所有专家输出重新组合为原始维度 [B, N, D]
+        # 首先重新组合各个模态的输出
+        output = torch.zeros(B, N, D, device=x.device, dtype=x.dtype)
         
-        # 6. 加权组合
-        output = torch.zeros_like(x)
+        # 填充各个模态的输出
+        output[:, 0:1, :] = fire_output  # [B, 1, D]
+        output[:, 1:13, :] = weather_output  # [B, 12, D]
+        output[:, 13:20, :] = terrain_output  # [B, 7, D]
+        output[:, 20:39, :] = modis_output  # [B, 19, D]
         
-        # 模态专家贡献
-        modality_contributions = [
-            modality_weights[:, 0:1].view(B, 1, 1) * fire_output,
-            modality_weights[:, 1:2].view(B, 1, 1) * weather_output,
-            modality_weights[:, 2:3].view(B, 1, 1) * terrain_output,
-            modality_weights[:, 3:4].view(B, 1, 1) * modis_output
-        ]
+        # 添加交互专家贡献
+        synergy_contribution = synergy_output[:, :, :D]  # 取前D维度
+        redundancy_contribution = redundancy_output[:, :, :D]  # 取前D维度
         
-        # 重新组合模态贡献
-        modality_combined = torch.cat(modality_contributions, dim=1)
-        output += modality_combined
-        
-        # 交互专家贡献 - 基于交互权重
-        output += interaction_weights[:, 0:1].view(B, 1, 1) * synergy_output
-        output += interaction_weights[:, 1:2].view(B, 1, 1) * redundancy_output
+        # 加权组合
+        output = (1 - interaction_weights[:, 0:1].view(B, 1, 1) - interaction_weights[:, 1:2].view(B, 1, 1)) * output + \
+                 interaction_weights[:, 0:1].view(B, 1, 1) * synergy_contribution + \
+                 interaction_weights[:, 1:2].view(B, 1, 1) * redundancy_contribution
         
         # 组合权重用于解释
         combined_weights = torch.cat([modality_weights, interaction_weights], dim=1)  # [B, 6]
         
-        return output, combined_weights
+        return output, combined_weights, mask_info
 
 class ModalitySplitter(nn.Module):
     """
@@ -156,11 +293,11 @@ class ModalitySplitter(nn.Module):
         self.fire_features = fire_features
         
     def forward(self, x):
-        # x: [B, L, N] -> split into modalities
-        fire = x[:, :, self.fire_features[0]:self.fire_features[1]]
-        weather = x[:, :, self.weather_features[0]:self.weather_features[1]]
-        terrain = x[:, :, self.terrain_features[0]:self.terrain_features[1]]
-        modis = x[:, :, self.modis_features[0]:self.modis_features[1]]
+        # x: [B, N, D] -> split into modalities (N=39 features, D=d_model)
+        fire = x[:, self.fire_features[0]:self.fire_features[1], :]
+        weather = x[:, self.weather_features[0]:self.weather_features[1], :]
+        terrain = x[:, self.terrain_features[0]:self.terrain_features[1], :]
+        modis = x[:, self.modis_features[0]:self.modis_features[1], :]
         
         return {
             'fire': fire,
@@ -264,7 +401,14 @@ class Model(nn.Module):
             ],
             norm_layer=torch.nn.LayerNorm(configs.d_model)
         )
-        self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
+        # 正确的投影层设计
+        if self.use_i2moe:
+            # I²MoE需要特殊的投影层：每个特征独立投影
+            # 输入: [B*N, D] -> 输出: [B*N, pred_len]
+            self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
+        else:
+            # 标准Mamba的投影层
+            self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
     # a = self.get_parameter_number()
     #
     # def get_parameter_number(self):
@@ -279,29 +423,48 @@ class Model(nn.Module):
     #     print('trainable_num:', total_num)
     #     print('trainable_ratio:', trainable_ratio)
 
-    def forecast(self, x_enc, x_mark_enc):
+    def forecast(self, x_enc, x_mark_enc, mask_ratio=0.0, training=True):
         # Embedding
-        enc_out = self.enc_embedding(x_enc, x_mark_enc)  # [B,T,C]
+        enc_out = self.enc_embedding(x_enc, x_mark_enc)  # [B,L,N] -> [B,N,D], N=39, D=1024
         
         # I²MoE processing
         if self.use_i2moe:
-            enc_out, expert_weights = self.i2moe(enc_out)
+            enc_out, expert_weights, mask_info = self.i2moe(enc_out, mask_ratio, training)
             self.last_expert_weights = expert_weights
+            self.last_mask_info = mask_info
         else:
             # Standard encoder
             enc_out, _ = self.encoder(enc_out)
+            self.last_mask_info = None
         
-        # Projection
-        dec_out = self.projector(enc_out.transpose(2, 1)).transpose(1, 2)  # [B, L, D]
+        # Projection - 正确的I²MoE投影设计
+        if self.use_i2moe:
+            # I²MoE输出: [B, N, D] -> 需要转换为 [B, pred_len, num_features]
+            # 每个特征独立处理，保持特征间的差异性
+            B, N, D = enc_out.shape
+            
+            # 方法1：每个特征独立投影（推荐）
+            # enc_out: [B, 39, D] -> 重塑为 [B*39, D]
+            enc_out_reshaped = enc_out.view(B * N, D)  # [B*39, D]
+            
+            # 对每个特征进行独立投影
+            dec_out_reshaped = self.projector(enc_out_reshaped)  # [B*39, pred_len]
+            
+            # 重塑回 [B, N, pred_len] 然后转置为 [B, pred_len, N]
+            dec_out = dec_out_reshaped.view(B, N, self.pred_len).transpose(1, 2)  # [B, pred_len, 39]
+        else:
+            # 标准Mamba: [B, N, D] -> [B, pred_len, N]
+            # 参考s_mamba.py的投影逻辑
+            dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :N]  # [B, pred_len, N]
         
         return dec_out
 
 
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-        # x_enc: [B, L, D] where L=10 represents data from the previous 10 days
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask_ratio=0.0, training=True):
+        # x_enc: [B, L, N] where L=10 represents data from the previous 10 days, N=39 features
         
-        dec_out = self.forecast(x_enc, x_mark_enc)
-        return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+        dec_out = self.forecast(x_enc, x_mark_enc, mask_ratio, training)
+        return dec_out[:, -self.pred_len:, :]  # [B, pred_len, N]
     
     
 if __name__ == '__main__':
@@ -370,30 +533,45 @@ if __name__ == '__main__':
     for name, data in modalities.items():
         print(f"{name}: {data.shape}")
     
+    # Test masked modality training
+    print("\n=== Testing Masked Modality Training ===")
+    
+    # Test without masking
+    output_normal = model_i2moe(x_enc, x_mark_enc, x_dec, x_mark_dec, mask_ratio=0.0, training=True)
+    print(f"Normal output shape: {output_normal.shape}")
+    
+    # Test with masking
+    output_masked = model_i2moe(x_enc, x_mark_enc, x_dec, x_mark_dec, mask_ratio=0.3, training=True)
+    print(f"Masked output shape: {output_masked.shape}")
+    
+    # Check mask info
+    if hasattr(model_i2moe, 'last_mask_info') and model_i2moe.last_mask_info is not None:
+        print("Mask info:")
+        for modality, mask in model_i2moe.last_mask_info.items():
+            masked_count = mask.sum().item()
+            total_count = mask.shape[0]
+            print(f"  {modality}: {masked_count}/{total_count} samples masked ({masked_count/total_count*100:.1f}%)")
+    
+    # Test different mask ratios
+    print("\n=== Testing Different Mask Ratios ===")
+    for mask_ratio in [0.1, 0.2, 0.3, 0.5]:
+        output = model_i2moe(x_enc, x_mark_enc, x_dec, x_mark_dec, mask_ratio=mask_ratio, training=True)
+        if hasattr(model_i2moe, 'last_mask_info') and model_i2moe.last_mask_info is not None:
+            total_masked = sum(mask.sum().item() for mask in model_i2moe.last_mask_info.values())
+            print(f"Mask ratio {mask_ratio}: {total_masked}/{batch_size*4} total features masked")
+    
     print("\n=== Test completed successfully! ===")
     
     # Usage example for training
     print("\n=== Usage Example ===")
-    print("To use I²MoE in training:")
+    print("To use I²MoE with masked modality training:")
     print("1. Set use_i2moe=True in Configs")
-    print("2. The model will automatically:")
-    print("   - Split 39 features into 4 modalities:")
-    print("     * Fire detection (1 feature)")
-    print("     * Weather factors (12 features)") 
-    print("     * Terrain features (7 features)")
-    print("     * MODIS products (19 features)")
-    print("   - Apply 6 interaction experts")
-    print("   - Use reweighting model for expert combination")
-    print("3. Expert weights are stored in model.last_expert_weights")
-    print("4. Modality splitter available at model.modality_splitter")
-    
-    # Example configuration for training
-    print("\nExample training config:")
-    print("configs = Configs(")
-    print("    seq_len=10,")
-    print("    pred_len=7,")
-    print("    d_model=39,")
-    print("    use_i2moe=True,  # Enable I²MoE")
-    print("    num_experts=6,   # 4 uniqueness + 1 synergy + 1 redundancy")
-    print("    expert_dropout=0.1")
-    print(")")
+    print("2. During training, use mask_ratio > 0:")
+    print("   output = model(x_enc, x_mark_enc, x_dec, x_mark_dec, mask_ratio=0.3, training=True)")
+    print("3. During inference, use mask_ratio=0:")
+    print("   output = model(x_enc, x_mark_enc, x_dec, x_mark_dec, mask_ratio=0.0, training=False)")
+    print("4. The model will automatically:")
+    print("   - Split 39 features into 4 modalities")
+    print("   - Apply random masking during training")
+    print("   - Use 6 interaction experts")
+    print("   - Store expert weights and mask info for analysis")
