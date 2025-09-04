@@ -1,0 +1,14 @@
+DEM_and_distance_map_interpolated_10x	min=0.0	max=15.88396167755127	(n_used=100/9132)	invalid_ratio=31.99%	nodata_ratio=31.99%	nan_ratio=0.00%	inf_ratio=0.00%
+ERA5_multi_bands_10x	min=-26865440.552529957	max=3567177.237654601	(n_used=100/9132)	invalid_ratio=31.78%	nodata_ratio=31.78%	nan_ratio=0.00%	inf_ratio=0.00%
+ERA5_multi_bands_10x_cleaned_localhampelFAST	min=-29298666.081398297	max=4341236.457006066	(n_used=100/9132)	invalid_ratio=31.78%	nodata_ratio=31.78%	nan_ratio=0.00%	inf_ratio=0.00%
+Firms_Detection_resampled_10x	min=0.0	max=84.0	(n_used=100/9132)	invalid_ratio=31.78%	nodata_ratio=31.78%	nan_ratio=0.00%	inf_ratio=0.00%
+LAI_BCBoundingbox_resampled_right_interpolation_clip_10x	min=1.0	max=72.0	(n_used=20/9132)	invalid_ratio=50.77%	nodata_ratio=50.77%	nan_ratio=0.00%	inf_ratio=0.00%
+LULC_BCBoundingbox_resampled_10x	min=1.0	max=17.0	(n_used=100/9132)	invalid_ratio=31.78%	nodata_ratio=31.78%	nan_ratio=0.00%	inf_ratio=0.00%
+MOD21A1DN_multibands_filtered_resampled_10x	min=0.0	max=535.7473754882812	(n_used=100/9132)	invalid_ratio=91.22%	nodata_ratio=91.22%	nan_ratio=0.00%	inf_ratio=0.00%
+MOD21A1DN_multibands_filtered_resampled_10x_cleaned_localhampelFAST	min=0.0	max=376.36517333984375	(n_used=100/9132)	invalid_ratio=89.48%	nodata_ratio=89.48%	nan_ratio=0.00%	inf_ratio=0.00%
+MODIS_Terra_Aqua_B20_21_merged_resampled_10x	min=0.0	max=387.672553182576	(n_used=100/9132)	invalid_ratio=31.78%	nodata_ratio=31.78%	nan_ratio=0.00%	inf_ratio=0.00%
+MODIS_Terra_Aqua_B20_21_merged_resampled_10x_cleaned_localhampelFAST	min=0.0	max=383.6210765110461	(n_used=100/9132)	invalid_ratio=31.78%	nodata_ratio=31.78%	nan_ratio=0.00%	inf_ratio=0.00%
+NDVI_EVI_10x	min=-7415.4111328125	max=6321.3720703125	(n_used=100/9132)	invalid_ratio=34.27%	nodata_ratio=34.27%	nan_ratio=0.00%	inf_ratio=0.00%
+NDVI_EVI_10x_cleaned_localhampelFAST	min=-425.9725036621094	max=418.7588806152344	(n_used=100/9132)	invalid_ratio=35.30%	nodata_ratio=35.30%	nan_ratio=0.00%	inf_ratio=0.00%
+Reflection_500_merge_TerraAquaWGS84_clip_scaled_10x	min=-2.868460178375244	max=1.3601446151733398	(n_used=100/9132)	invalid_ratio=32.84%	nodata_ratio=32.84%	nan_ratio=0.00%	inf_ratio=0.00%
+Reflection_500_merge_TerraAquaWGS84_clip_scaled_10x_cleaned_localhampelFAST	min=-2.867199182510376	max=1.5526416301727295	(n_used=100/9132)	invalid_ratio=32.89%	nodata_ratio=32.89%	nan_ratio=0.00%	inf_ratio=0.00%

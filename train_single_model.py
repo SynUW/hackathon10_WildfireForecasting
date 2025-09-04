@@ -80,7 +80,7 @@ def train_single_model_task(model_name, model_type, gpu_id, log_dir):
     try:
         # Prepare data
         print(" Preparing data...")
-        train_dataset, val_dataset, test_dataset, data_loader_obj = prepare_data_loaders()
+        train_dataset, val_dataset, test_dataset, data_loader_obj, data_loader_test = prepare_data_loaders()
         
         # Initialize FIRMS normalizer
         print("🔧 Initializing FIRMS normalizer...")
@@ -116,9 +116,15 @@ def train_single_model_task(model_name, model_type, gpu_id, log_dir):
             num_workers=val_workers, collate_fn=data_loader_obj.dataset.custom_collate_fn, 
             worker_init_fn=worker_init_fn, pin_memory=True, persistent_workers=True  # Optimized settings
         )
+        # Use appropriate collate_fn for test dataset
+        if data_loader_test is not None:
+            test_collate_fn = data_loader_test.dataset.custom_collate_fn
+        else:
+            test_collate_fn = data_loader_obj.dataset.custom_collate_fn
+            
         test_loader = DataLoader(
             test_dataset, batch_size=train_config['batch_size'], shuffle=False,
-            num_workers=test_workers, collate_fn=data_loader_obj.dataset.custom_collate_fn, 
+            num_workers=test_workers, collate_fn=test_collate_fn, 
             worker_init_fn=worker_init_fn, pin_memory=True, persistent_workers=True  # Optimized settings
         )
         

@@ -92,24 +92,26 @@ class EncoderLayer(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.activation = F.relu if activation == "relu" else F.gelu
+        
         self.man = Mamba(
-            d_model=39,  # Model dimension should match number of features
+            d_model=47,  # Model dimension should match number of features
             d_state=16,  # SSM state expansion factor
-            d_conv=2,  # Local convolution width
-            expand=1,  # Block expansion factor)
+            d_conv=4,  # Local convolution width
+            expand=2,  # Block expansion factor)
         )
         self.man2 = Mamba(
-            d_model=39,  # Model dimension d_model
+            d_model=47,  # Model dimension d_model
             d_state=16,  # SSM state expansion factor
-            d_conv=2,  # Local convolution width
-            expand=1,  # Block expansion factor)
+            d_conv=4,  # Local convolution width
+            expand=2,  # Block expansion factor)
         )
+        
         self.a = AttentionLayer(
                         FullAttention(False, 2, attention_dropout=0.1,
                                       output_attention=True), d_model, 1)
     def forward(self, x, attn_mask=None, tau=None, delta=None):
+        # x: [B, N, D]
         new_x = self.attention(x) + self.attention_r(x.flip(dims=[1])).flip(dims=[1])
-        
         # Temporal Mamba which is not used in the original paper
         # new_x: [B, N, D] -> [B, D, N] -> Mamba -> [B, D, N] -> [B, N, D]
         # new_x_transpose = new_x.transpose(-1, 1)
@@ -120,6 +122,13 @@ class EncoderLayer(nn.Module):
 
         x = x + new_x
         y = x = self.norm1(x)
+        
+        # Temporal Mamba which is not used in the original paper
+        # y: [B, N, D] -> [B, D, N] -> Mamba -> [B, D, N] -> [B, N, D]
+        # y = y.transpose(-1, 1)
+        # y = self.man(y) + self.man2(y.flip(dims=[1])).flip(dims=[1])
+        # y = y.transpose(-1, 1)
+        
         # why transpose? B N L -> B L N -> B N L
         y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
         y = self.dropout(self.conv2(y).transpose(-1, 1))

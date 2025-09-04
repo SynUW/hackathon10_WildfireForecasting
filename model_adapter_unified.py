@@ -131,6 +131,89 @@ class UnifiedModelAdapter:
         
         return x_mark_enc, x_mark_dec
     
+    def create_time_marks_new(self, date_strings: List[str], label_len: int = 0):
+        """
+        返回:
+        x_mark_enc: (B, seq_len, F)
+        x_mark_dec: (B, dec_time_len=label_len+pred_len, F)
+        改进点：
+        - 加入 DOY sin/cos（365），可选多频谐波
+        - 更清晰的 offsets 生成方式
+        - 保留 weekday sin/cos；可选保留 month sin/cos
+        """
+
+        B = len(date_strings)
+        dec_time_len = label_len + self.pred_len
+
+        # 解析基准日期（每个样本的“当前日”）
+        def parse_date(s):
+            try:
+                s = str(s)
+                if len(s) == 8:
+                    return datetime(int(s[:4]), int(s[4:6]), int(s[6:8]), 12, 0, 0)
+            except:
+                pass
+            return datetime(2010, 5, 6, 12, 0, 0)
+
+        base_dates = [parse_date(s) for s in date_strings]
+
+        # 明确 offsets：过去到当前（含0），以及 decoder 的 过去+未来
+        enc_offsets = np.arange(-self.seq_len + 1, 1, dtype=int)               # [-L+1, ..., 0]
+        dec_offsets = np.concatenate([
+            np.arange(-label_len + 1, 1, dtype=int),                           # 过去 label_len-1 天 + 当天0
+            np.arange(1, self.pred_len + 1, dtype=int)                         # 未来 1..P
+        ], axis=0)
+
+        def build_marks_for_offsets(base_dates, offsets):
+            feats = []
+            for base in base_dates:
+                dates = [base + timedelta(days=int(off)) for off in offsets]
+
+                years   = np.array([d.year for d in dates])
+                # Day-of-year: 1..365（闰年也可投到/365 的连续相位即可）
+                doys    = np.array([d.timetuple().tm_yday for d in dates])  # 1..365/366
+                # weekday: 0..6
+                wk      = np.array([d.weekday() for d in dates])
+                months  = np.array([d.month for d in dates])                 # 可选
+
+                # ===== 周期编码 =====
+                # DOY 主谐波 + 几个高阶谐波（可选）
+                def sincos(x, period, k=1):
+                    ang = 2*np.pi*k*(x/period)
+                    return np.sin(ang), np.cos(ang)
+
+                # 处理闰年的 366：归一化到 365
+                doy_base = np.where(doys > 365, 365, doys).astype(float)
+
+                comp = []
+                # 年内主谐波
+                s, c = sincos(doy_base, 365.0, k=1); comp += [s, c]
+                # 可选：再加几阶
+                for k in (2, 3, 6, 12):
+                    s, c = sincos(doy_base, 365.0, k=k); comp += [s, c]
+
+                # 周期（7天）
+                s, c = sincos(wk.astype(float), 7.0, k=1); comp += [s, c]
+
+                # 可选：月度（12）
+                s, c = sincos((months-1).astype(float), 12.0, k=1); comp += [s, c]
+
+                # 年份（可选，简单中心化）
+                year_norm = (years - years.mean()) / (years.std() + 1e-6)
+                comp += [year_norm]
+
+                feats.append(np.stack(comp, axis=1))  # (len(offsets), F)
+
+            return np.stack(feats, axis=0)  # (B, len(offsets), F)
+
+        x_mark_enc_np = build_marks_for_offsets(base_dates, enc_offsets)
+        x_mark_dec_np = build_marks_for_offsets(base_dates, dec_offsets)
+
+        x_mark_enc = torch.from_numpy(x_mark_enc_np).float()
+        x_mark_dec = torch.from_numpy(x_mark_dec_np).float()
+        return x_mark_enc, x_mark_dec
+
+    
     def prepare_standard_inputs(self, past_data: torch.Tensor, future_data: torch.Tensor, 
                               date_strings: List[str]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -200,7 +283,7 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
         'seq_len': 15,
         'pred_len': 7,
         'label_len': 0,  # Default to 0, specific models will override
-        'd_model': 1024,
+        'd_model': 1024, # 1024,
         'n_heads': 16,
         'd_ff': 1024,
         'e_layers': 2,

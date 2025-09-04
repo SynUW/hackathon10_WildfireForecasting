@@ -5,7 +5,7 @@ Comprehensive Wildfire Forecasting Model Benchmark - Unified Version
 Supports early stopping, F1 evaluation metric, best model testing, and CSV result export
 """
 
-from dataload_year import TimeSeriesDataLoader, TimeSeriesPixelDataset, FullDatasetLoader
+from dataload_year import TimeSeriesDataLoader, TimeSeriesPixelDataset
 from torch.utils.data import Dataset, DataLoader, Subset
 import torch
 import torch.nn as nn
@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/7to1_focal_withRegressionLoss_experiments'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_focal_withRegressionLoss_experiments'
 
 def print_config_status():
     """Print current configuration status"""
@@ -95,7 +95,7 @@ def print_config_status():
         print(f"   Weather channels: [{channels_str}] (Total {len(DATA_CONFIG['weather_channels'])})")
     
     # Calculate total input channels
-    base_channels = 39
+    base_channels = 40
     additional_channels = 0
     if DATA_CONFIG['enable_position_features']:
         additional_channels += 1
@@ -191,14 +191,14 @@ TRAINING_CONFIG = {
     'use_wandb': WANDB_ENABLED,         # Use WandB configuration
     'seed': GLOBAL_SEED,                # Use random seed
     'patience': DEFAULT_PATIENCE,       # Use patience configuration
-    'seq_len': 7,                      # Input sequence length
+    'seq_len': 365,                      # Input sequence length
     'pred_len': 1,                      # Prediction sequence length
     'focal_alpha': 0.5,                 # Use optimal Focal Loss positive sample weight
     'focal_gamma': 2.0,                 # Focal Loss focus parameter
     
     # Standard model configuration
     'standard': {
-        'epochs': 20,
+        'epochs': 10,
         'batch_size': 128,
         'learning_rate': 5e-5,          # Lower learning rate
         'weight_decay': 1e-4,
@@ -218,7 +218,15 @@ DATA_CONFIG = {
     
     # Underlying dataset configuration (load full data)
     'positive_ratio': 1.0,           # Load all positive samples at the bottom layer
-    'pos_neg_ratio': 2.0,            # Positive to negative sample ratio 1:1 at the bottom layer
+    'pos_neg_ratio': 2.0,            # Positive to negative sample ratio 1:1 at the bottom layer. 负样本数量 = 正样本数量 × pos_neg_ratio
+    
+    # Test sampling override
+    # If test_use_full_test is True -> use all negatives for test (pos_neg_ratio=999999)
+    # Else if test_pos_neg_ratio is a number -> use that ratio for test
+    # Else (None) -> inherit train/val setting (current behavior)
+    'test_use_full_test': False,
+    'test_pos_neg_ratio': 1.0,
+    
     'resample_each_epoch': False,    # Disable resampling at the bottom layer, so always set to False
     'firms_min': 0,                  # Minimum value of FIRMS data (skip statistics)
     'firms_max': 100,                # Maximum value of FIRMS data (skip statistics)
@@ -234,6 +242,10 @@ DATA_CONFIG = {
     # 🔥 New: Future weather data feature configuration  
     'enable_future_weather': False,    # Whether to enable future weather data feature (default disabled)
     'weather_channels': list(range(1, 13)),  # Weather data channel indices: 2-13 bands (indices 1-12)
+    # Optional: imputed H5 to override past window
+    'imputed_h5': '',              # Path to per-sample H5 (key: YYYYMMDD_row_col, data [39,L])
+    'impute_mode': 'full',         # 'full' or 'replace_missing'
+
 }
 
 # =============================================================================
@@ -783,9 +795,9 @@ class Config:
             self.dropout = 0.1
             self.activation = 'gelu'
             self.output_attention = False
-            self.enc_in = 39
-            self.dec_in = 39
-            self.c_out = 39
+            self.enc_in = 40
+            self.dec_in = 40
+            self.c_out = 40
             self.embed = 'timeF'
             self.freq = 'd'
             self.factor = 1
@@ -849,7 +861,7 @@ class Config:
         Calculate input channel number dynamically based on configuration
         Base channel number + position feature channel number + weather data channel number
         """
-        base_channels = 39  # Base channel number
+        base_channels = 40  # Base channel number
         additional_channels = 0
         
         # Position information feature (+1 channel) - use config object attributes first, otherwise use global configuration
@@ -877,7 +889,7 @@ class Config:
         self.dec_in = dynamic_enc_in
         
         # Output channel number remains 39 (predict all original channels)
-        self.c_out = 39
+        self.c_out = 40
         
         # Print channel information for debugging - use config object attributes instead of global configuration
         features_info = []
@@ -972,8 +984,7 @@ class MultiTaskFocalLoss(nn.Module):
         firms_pred = predictions[:, :, 0]      # (B, T) - FIRMS channel used for binary classification
         firms_target = targets[:, :, 0]        # (B, T)
         other_pred = predictions[:, :, 1:]     # (B, T, 38) - Other channels used for regression
-        other_target = targets[:, :, 1:]       # (B, T, 38)
-        
+        other_target = targets[:, :, 1:]       # (B, T, 38)                
         # 1. Calculate Focal Loss for FIRMS (binary classification)
         # Convert FIRMS target to binary classification labels (1 if >0, 0 if =0)
         firms_binary_target = (firms_target > 0).float()
@@ -1004,7 +1015,7 @@ class MultiTaskFocalLoss(nn.Module):
         other_loss = other_loss * self.other_drivers_weight
         
         # Total loss
-        total_loss = firms_loss + other_loss
+        total_loss = firms_loss # + other_loss
         
         # Return loss component information
         loss_components = {
@@ -1669,7 +1680,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             # x_mark_enc: B T 7 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_sin, weekday_cos)
             x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
             x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
-            
+            # x_enc = torch.flip(x_enc, dims=[1])
             output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)  # B T C
                         
             # Multi-task learning: Predict all 39 channels
@@ -1740,6 +1751,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
                 # x_mark_enc: B T 5 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_norm)
                 x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
                 x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
+                # x_enc = torch.flip(x_enc, dims=[1])
                 output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
                 
                 # Multi-task learning: Predict all 39 channels
@@ -1965,6 +1977,7 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
             # x_mark_enc: B T 5 (year_norm, month_sin, month_cos, day_sin, day_cos, weekday_norm)
             x_enc, x_mark_enc, x_dec, x_mark_dec = adapter.adapt_inputs(past, future, date_strings)
             x_enc, x_mark_enc, x_dec, x_mark_dec = x_enc.to(device), x_mark_enc.to(device), x_dec.to(device), x_mark_dec.to(device)
+            # x_enc = torch.flip(x_enc, dims=[1])
             output = model(x_enc, x_mark_enc, x_dec, x_mark_dec)
             
             # Multi-task learning: Predict all 39 channels
@@ -1983,6 +1996,13 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
     # Calculate test metrics - using F1 optimal threshold
     test_preds = torch.cat(test_preds, dim=0)
     test_targets = torch.cat(test_targets, dim=0)
+    
+    # Debug: Print test data distribution before metric calculation
+    test_targets_np = test_targets.cpu().numpy()
+    test_positive_count = np.sum(test_targets_np > 0)
+    test_total_count = len(test_targets_np)
+    print(f"   🔍 Test data distribution before metrics: {test_positive_count}/{test_total_count} positive samples ({test_positive_count/test_total_count:.4f})")
+    
     precision, recall, f1, pr_auc, mse, mae = calculate_optimal_f1_metrics(test_preds, test_targets)
     
     avg_test_loss = total_test_loss / len(test_loader)
@@ -2144,8 +2164,27 @@ def prepare_data_loaders():
     """Prepare data loaders"""
     print("📂 Loading data...")
     data_loader = TimeSeriesDataLoader(
-        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/pixel_samples_merged',
-        h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/full_datasets',
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/year_datasets_h5_masked_10x',
+        
+        # the most stable one, and with normalization
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/full_datasets',
+        
+        # try to impute the data
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/full_datasets_imputed',
+        
+        # with true LAI and distance map but without normalization
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/h5_dataset/all_data_masked_10x_without_qa_Norm_masked_pixel_clean_10',
+        
+        # with norm and right data
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/h5_dataset/all_data_masked_10x_without_qa_masked_clip_min_max_normalized',
+        h5_dir = '/beluga/wildfire_prediction/all_data_masked_10x_without_qa_masked_clip_min_max_normalized',
+        # without downsampling withhout test seems not correct as it does not sample the data
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_undownsampled',
+
+        # with qa and different data format
+        # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied',
+        
+
         positive_ratio=DATA_CONFIG['positive_ratio'],
         pos_neg_ratio=DATA_CONFIG['pos_neg_ratio'],
         resample_each_epoch=False  # Disable resampling at the bottom layer, use dynamic sampling instead
@@ -2166,19 +2205,168 @@ def prepare_data_loaders():
         enable_dynamic_sampling=DATA_CONFIG['enable_dynamic_sampling']
     )
     
-    # Validation set and test set use full data, no dynamic sampling
+    # Validation set: use split on the same underlying dataset (no dynamic sampling)
     val_dataset = Subset(data_loader.dataset, val_indices)
-    test_dataset = Subset(data_loader.dataset, test_indices)
+
+    # Test set: allow overriding pos_neg_ratio or using full negatives
+    test_pos_neg_ratio = DATA_CONFIG.get('test_pos_neg_ratio', None)
+    test_use_full = DATA_CONFIG.get('test_use_full_test', False)
+    
+    # Debug: Print configuration values
+    print(f"🔍 Test sampling configuration:")
+    print(f"   test_pos_neg_ratio: {test_pos_neg_ratio} (type: {type(test_pos_neg_ratio)})")
+    print(f"   test_use_full: {test_use_full} (type: {type(test_use_full)})")
+    print(f"   Condition check: (test_pos_neg_ratio is None) = {test_pos_neg_ratio is None}")
+    print(f"   Condition check: (not test_use_full) = {not test_use_full}")
+    print(f"   Combined condition: {(test_pos_neg_ratio is None) and (not test_use_full)}")
+    
+    # Initialize variables for test dataset handling
+    data_loader_test = None
+    test_indices2 = None
+
+    if (test_pos_neg_ratio is None) and (not test_use_full):
+        # Default: use the same underlying dataset and indices as train/val
+        test_dataset = Subset(data_loader.dataset, test_indices)
+    else:
+        # Build a dedicated loader/dataset for test with overridden sampling rules
+        override_ratio = 999999 if test_use_full else float(test_pos_neg_ratio)
+        print(f"🔍 Creating test data loader with pos_neg_ratio={override_ratio}")
+        data_loader_test = TimeSeriesDataLoader(
+            h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/h5_dataset/all_data_masked_10x_without_qa_masked_clip_min_max_normalized',
+            positive_ratio=DATA_CONFIG['positive_ratio'],
+            pos_neg_ratio=override_ratio,
+            resample_each_epoch=False
+        )
+        print(f"🔍 Test data loader created with pos_neg_ratio={data_loader_test.pos_neg_ratio}")
+        # Recompute test indices based on configured years to keep year split consistent
+        _, _, test_indices2 = data_loader_test.get_year_based_split(
+            train_years=DATA_CONFIG['train_years'],
+            val_years=DATA_CONFIG['val_years'],
+            test_years=DATA_CONFIG['test_years']
+        )
+        test_dataset = Subset(data_loader_test.dataset, test_indices2)
+
+    # ===== Optionally apply imputed H5 to override past windows =====
+    if DATA_CONFIG.get('imputed_h5'):
+        imputed_path = DATA_CONFIG['imputed_h5']
+        impute_mode = DATA_CONFIG.get('impute_mode', 'full')
+        if os.path.isfile(imputed_path):
+            print(f"🧩 Using imputed H5 to override past windows: {imputed_path} (mode={impute_mode})")
+
+            import h5py
+            from torch.utils.data import Dataset
+
+            class ImputedWrapperDataset(Dataset):
+                def __init__(self, base_dataset, indices):
+                    self.base = base_dataset
+                    self.indices = list(indices)
+                    self.h5 = h5py.File(imputed_path, 'r')
+                    self.mode = impute_mode
+
+                def __len__(self):
+                    return len(self.indices)
+
+                def __getitem__(self, i):
+                    idx = self.indices[i]
+                    past, future, meta = self.base[idx]
+                    date_int, row, col = meta
+                    key = f"{int(date_int)}_{int(row)}_{int(col)}"
+                    if key in self.h5:
+                        arr = self.h5[key][()]  # [39, L]
+                        import numpy as np
+                        x_imp = torch.from_numpy(arr.astype(np.float32))  # [C,L]
+                        if self.mode == 'full':
+                            past = x_imp
+                        else:  # replace_missing
+                            # 原始 [C,L] 中 0 视作缺失（通道0 特殊：0 为合法观测）
+                            obs = (past != 0)
+                            obs[0, :] = True
+                            past = past * obs + x_imp * (~obs)
+                    return past, future, meta
+
+                def __del__(self):
+                    try:
+                        self.h5.close()
+                    except Exception:
+                        pass
+
+            train_dataset = ImputedWrapperDataset(data_loader.dataset, train_indices)
+            val_dataset = ImputedWrapperDataset(data_loader.dataset, val_indices)
+            # For test dataset, use the correct indices based on whether we overrode sampling
+            if (test_pos_neg_ratio is None) and (not test_use_full):
+                test_dataset = ImputedWrapperDataset(data_loader.dataset, test_indices)
+            else:
+                test_dataset = ImputedWrapperDataset(data_loader_test.dataset, test_indices2)
+        else:
+            print(f"⚠️ imputed_h5 not found: {imputed_path}. Ignoring.")
     
     print(f"📊 Dataset size:")
     print(f"    Training set: {len(train_dataset)} (full: {len(train_indices)})")
     print(f"    Validation set: {len(val_dataset)} (full data)")
-    print(f"    Test set: {len(test_dataset)} (full data)")
+    if (test_pos_neg_ratio is None) and (not test_use_full):
+        print(f"    Test set: {len(test_dataset)} (inherit train/val sampling rules)")
+    else:
+        mode = 'FULL' if test_use_full else f"1:{override_ratio}"
+        print(f"    Test set: {len(test_dataset)} (override pos_neg_ratio={mode})")
+        
+        # Debug: Print test dataset statistics based on split indices
+        if data_loader_test is not None:
+            # For test dataset with independent sampling, use the entire dataset
+            # test_stats = calculate_split_stats(data_loader_test.dataset, None)
+            test_stats = calculate_split_stats(data_loader_test.dataset, test_indices2)  # 只统计测试年子集
+            print(f"    Test dataset stats: {test_stats['positive_samples']} pos, {test_stats['negative_samples']} neg, ratio=1:{test_stats['pos_neg_ratio']:.2f}")
+            
+            # Calculate statistics for the actual train split (train_indices)
+            train_stats = calculate_split_stats(data_loader.dataset, train_indices)
+            print(f"    Train dataset stats (full): {train_stats['positive_samples']} pos, {train_stats['negative_samples']} neg, ratio=1:{train_stats['pos_neg_ratio']:.2f}")
+            
+            # Calculate statistics for the actual used train dataset (after 30% sampling)
+            # actual_train_stats = calculate_split_stats(data_loader.dataset, list(range(len(train_dataset))))
+            actual_train_stats = calculate_split_stats(data_loader.dataset, train_dataset.current_indices)
+            print(f"    Train dataset stats (30%): {actual_train_stats['positive_samples']} pos, {actual_train_stats['negative_samples']} neg, ratio=1:{actual_train_stats['pos_neg_ratio']:.2f}")
+            print(f"    Test/Train ratio difference: {abs(test_stats['pos_neg_ratio'] - train_stats['pos_neg_ratio']):.3f}")
     print(f"    Dynamic sampling: {'Enabled' if DATA_CONFIG['enable_dynamic_sampling'] else 'Disabled'}")
     if DATA_CONFIG['enable_dynamic_sampling']:
         print(f"    Sampling configuration: Randomly use {DATA_CONFIG['sampling_ratio']:.1%} of training data per epoch")
     
-    return train_dataset, val_dataset, test_dataset, data_loader
+    return train_dataset, val_dataset, test_dataset, data_loader, data_loader_test
+
+def calculate_split_stats(dataset, split_indices):
+    """Calculate statistics for a specific split based on indices"""
+    positive_count = 0
+    negative_count = 0
+    
+    # Get the sample_index from the dataset
+    sample_index = dataset.sample_index
+    
+    # For test dataset with independent sampling, split_indices might be None or empty
+    # In this case, use the entire dataset
+    if split_indices is None or len(split_indices) == 0:
+        # Use the entire dataset for statistics
+        for _, _, metadata in sample_index:
+            if metadata['firms_value'] >= dataset.min_fire_threshold:
+                positive_count += 1
+            else:
+                negative_count += 1
+        total_samples = len(sample_index)
+    else:
+        # Count positive and negative samples in the split
+        for idx in split_indices:
+            if idx < len(sample_index):
+                _, _, metadata = sample_index[idx]
+                if metadata['firms_value'] >= dataset.min_fire_threshold:
+                    positive_count += 1
+                else:
+                    negative_count += 1
+        total_samples = len(split_indices)
+    
+    return {
+        'total_samples': total_samples,
+        'positive_samples': positive_count,
+        'negative_samples': negative_count,
+        'positive_ratio': positive_count / total_samples if total_samples > 0 else 0,
+        'pos_neg_ratio': negative_count / positive_count if positive_count > 0 else 0
+    }
 
 def main():
     """Main function - train standard models"""
@@ -2300,7 +2488,7 @@ def main():
         print(f"💾 GPU memory: {gpu_memory:.1f} GB")
     
     # Prepare data
-    train_dataset, val_dataset, test_dataset, data_loader_obj = prepare_data_loaders()
+    train_dataset, val_dataset, test_dataset, data_loader_obj, data_loader_test = prepare_data_loaders()
     
     # Initialize FIRMS normalizer
     print("🔧 Initializing FIRMS normalizer...")
@@ -2335,9 +2523,15 @@ def main():
             val_dataset, batch_size=standard_config['batch_size'], shuffle=False,
             num_workers=4, collate_fn=data_loader_obj.dataset.custom_collate_fn, worker_init_fn=worker_init_fn
         )
+        # Use appropriate collate_fn for test dataset
+        if data_loader_test is not None:
+            test_collate_fn = data_loader_test.dataset.custom_collate_fn
+        else:
+            test_collate_fn = data_loader_obj.dataset.custom_collate_fn
+            
         test_loader = DataLoader(
             test_dataset, batch_size=standard_config['batch_size'], shuffle=False,
-            num_workers=4, collate_fn=data_loader_obj.dataset.custom_collate_fn, worker_init_fn=worker_init_fn
+            num_workers=4, collate_fn=test_collate_fn, worker_init_fn=worker_init_fn
         )
         
         standard_results = train_and_test_models(

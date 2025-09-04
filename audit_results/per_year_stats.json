@@ -1,0 +1,177 @@
+{
+  "2000": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2000_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  },
+  "2001": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2001_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2002": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2002_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2003": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2003_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2004": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2004_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  },
+  "2005": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2005_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2006": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2006_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2007": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2007_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2008": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2008_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  },
+  "2009": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2009_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2010": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2010_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2011": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2011_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2012": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2012_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  },
+  "2013": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2013_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2014": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2014_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2015": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2015_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2016": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2016_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  },
+  "2017": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2017_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2018": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2018_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2019": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2019_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2020": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2020_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  },
+  "2021": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2021_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2022": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2022_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2023": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2023_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 365
+  },
+  "2024": {
+    "file": "/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied/2024_year_dataset.h5",
+    "layout": "xc",
+    "N_pixels": 24653,
+    "C_channels": 40,
+    "T_timesteps": 366
+  }
+}
