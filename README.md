@@ -193,3 +193,14 @@ For environment or training issues, please contact the maintainer or submit an i
 ### Implementation Notes
 - These papers provide valuable insights for enhancing the current wildfire forecasting framework
 - Focus areas include: frequency domain methods, spatio-temporal modeling, and expert mixture approaches 
+
+## Mabel's Results
+### Baseline model
+![baseline](baseline.png)
+### Best model
+![best](best_model.png)
+
+## Key Innovations
+1. Multitask BCE loss/arctan loss (Inspired by [Nature](https://www.nature.com/articles/s41598-025-95529-2))
+2. Endogenous/Exogenous Cross Attention inspired by TimeXer (**greatest impact**)
+
