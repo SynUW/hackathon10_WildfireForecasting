@@ -16,6 +16,7 @@ from model_zoo.layers.Mamba_EncDec import Encoder, EncoderLayer
 from model_zoo.layers.Embed import DataEmbedding_inverted, PositionalEmbedding
 import datetime
 import numpy as np
+import torch.nn.functional as F
 
 from mamba_ssm import Mamba
 
@@ -222,6 +223,53 @@ class SelectiveFrequencyMoE(nn.Module):
         out[:, :, s0:e0 + 1] = x_sel_out
         return out
 
+
+class EndoExoAttention(nn.Module):
+    """
+    Cross-attention where endogenous (Q) attends to exogenous (K,V).
+    Works on [B, N, D] embeddings (variables × embedding dimension).
+    """
+    def __init__(self, d_model, n_heads=4, dropout=0.1):
+        super(EndoExoAttention, self).__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+
+        self.query_proj = nn.Linear(d_model, d_model)
+        self.key_proj   = nn.Linear(d_model, d_model)
+        self.value_proj = nn.Linear(d_model, d_model)
+
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, endo, exo):
+        """
+        endo: [B, N_endo, D]
+        exo:  [B, N_exo, D]
+        """
+        B, Nq, _ = endo.shape
+        B, Nk, _ = exo.shape
+
+        # Project
+        Q = self.query_proj(endo)  # [B, Nq, D]
+        K = self.key_proj(exo)     # [B, Nk, D]
+        V = self.value_proj(exo)   # [B, Nk, D]
+
+        # Split into heads
+        Q = Q.view(B, Nq, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, Nq, Dh]
+        K = K.view(B, Nk, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, Nk, Dh]
+        V = V.view(B, Nk, self.n_heads, self.d_head).transpose(1, 2)  # [B, H, Nk, Dh]
+
+        # Scaled dot-product attention
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_head ** 0.5)  # [B, H, Nq, Nk]
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_out = torch.matmul(attn_weights, V)  # [B, H, Nq, Dh]
+
+        # Merge heads
+        attn_out = attn_out.transpose(1, 2).contiguous().view(B, Nq, self.d_model)  # [B, Nq, D]
+        return self.out_proj(attn_out)
+
+'''
 class Model(nn.Module):
     """
     Paper link: https://arxiv.org/abs/2310.06625
@@ -253,6 +301,8 @@ class Model(nn.Module):
         # Embedding - first parameter should be number of features (c_in)
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
                                                     configs.dropout, time_feat_dim=7)
+
+        self.cross_attn = EndoExoAttention(d_model=configs.d_model, n_heads=4, dropout=configs.dropout)
         
         # Encoder-only architecture
         self.encoder = Encoder(
@@ -324,6 +374,110 @@ class Model(nn.Module):
         # x_enc: [B, L, D] where L=10 represents data from the previous 10 days
         # target_date: [B] list of date strings in yyyymmdd format
         
+        dec_out = self.forecast(x_enc, x_mark_enc)
+        return dec_out[:, -self.pred_len:, :]  # [B, L, N]
+'''
+    
+class Model(nn.Module):
+    """
+    Paper link: https://arxiv.org/abs/2310.06625
+    """
+
+    def __init__(self, configs):
+        super(Model, self).__init__()
+        self.seq_len = configs.seq_len
+        self.pred_len = configs.pred_len
+        self.output_attention = configs.output_attention
+        self.use_norm = configs.use_norm
+        self.output_attention = getattr(configs, "output_attention", False)
+
+        # Frequency MoE
+        moe_range = getattr(configs, "moe_range_1b", (2, 13))
+        n_experts = getattr(configs, "n_experts", 3)
+        moe_residual = getattr(configs, "moe_residual", True)
+        self.sel_freq_moe = SelectiveFrequencyMoE(
+            seq_len=configs.seq_len,
+            n_experts=n_experts,
+            residual_add=moe_residual,
+            selected_idx_1based=moe_range
+        )
+        
+        # Endogenous + exogenous embeddings
+        self.endogenous_embedding = EnEmbedding(configs.d_model, configs.dropout, configs.seq_len)
+        self.enc_embedding = DataEmbedding_inverted(
+            configs.seq_len, configs.d_model, configs.embed, configs.freq,
+            configs.dropout, time_feat_dim=7
+        )
+
+        # Cross-attention
+        self.cross_attn = EndoExoAttention(d_model=configs.d_model, n_heads=4, dropout=configs.dropout)
+        
+        # Encoder (Mamba)
+        self.encoder = Encoder(
+            [
+                EncoderLayer(
+                    Mamba(
+                        d_model=configs.d_model,
+                        d_state=configs.d_state,
+                        d_conv=2,
+                        expand=1,
+                    ),
+                    Mamba(
+                        d_model=configs.d_model,
+                        d_state=configs.d_state,
+                        d_conv=2,
+                        expand=1,
+                    ),
+                    configs.d_model,
+                    configs.d_ff,
+                    dropout=configs.dropout,
+                    activation=configs.activation,
+                )
+                for _ in range(configs.e_layers)
+            ],
+            norm_layer=torch.nn.LayerNorm(configs.d_model),
+        )
+
+        self.projector = nn.Linear(configs.d_model, configs.pred_len, bias=True)
+
+    def forecast(self, x_enc, x_mark_enc):
+        """
+        x_enc: [B, L, N]  -> input sequence
+        x_mark_enc: [B, L, time_features]
+        """
+        B, L, N = x_enc.shape
+
+        # Replace -9999 with 0
+        x_enc = torch.where(x_enc == -9999, torch.zeros_like(x_enc), x_enc)
+
+        # use freqmoe or not for era5 data
+        if 1 == 1:
+            x_enc = self.sel_freq_moe(x_enc)
+
+        # --- Split endogenous (Q) vs exogenous (K,V) ---
+        endo = x_enc[:, :, 0:1]      # FIRMS or first channel
+        exo  = x_enc[:, :, 1:] if N > 1 else None
+
+        # Embeddings
+        enc_endo = self.enc_embedding(endo, x_mark_enc)   # [B, N_endo, D]
+        enc_exo  = self.enc_embedding(exo, x_mark_enc) if exo is not None else None
+
+        # --- Cross Attention ---
+        if enc_exo is not None:
+            enc_endo = self.cross_attn(enc_endo, enc_exo)  # [B, N_endo, D]
+
+        # --- Pass through Mamba encoder ---
+        enc_out, attns = self.encoder(enc_endo, attn_mask=None)
+
+        # --- Project back to predictions ---
+        dec_out = self.projector(enc_out).permute(0, 2, 1)  # [B, pred_len, N_endo]
+
+        # Expand predictions to match number of target channels
+        dec_out = dec_out.repeat(1, 1, N)  # broadcast to N variables if needed
+
+        return dec_out
+
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         dec_out = self.forecast(x_enc, x_mark_enc)
         return dec_out[:, -self.pred_len:, :]  # [B, L, N]
     

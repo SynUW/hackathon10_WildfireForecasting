@@ -24,6 +24,7 @@ import pandas as pd
 import sys
 import time
 import argparse
+import pdb
 
 # Dynamically import wandb
 try:
@@ -47,12 +48,27 @@ DEFAULT_PATIENCE = 5              # Default early stopping patience
 DEFAULT_MAX_PARALLEL_PER_GPU = 2   # Default maximum parallel tasks per GPU
 
 # Multi-task learning configuration
+#MULTITASK_CONFIG = {
+#    'firms_weight': 1,           # Loss weight for FIRMS prediction. Typical loss combination (other drivers loss*weight): FIRMS loss: 0.3112890124320984, Other drivers loss: 0.0020517727825790644
+#    'other_drivers_weight': 1.0,   # Loss weight for other drivers prediction
+#    'ignore_zero_values': True,    # Whether to ignore zero values in other drivers
+#    'loss_function': 'mse',       # Loss function type: 'huber', 'mse', 'mae'
+#    'loss_type': 'focal_arctan'          # Loss type selection: 'focal'(MultiTaskFocalLoss), 'focal_arctan'(MultiTaskFocalArcTanLoss), 'kldiv'(MultiTaskKLDivLoss), or 'multitask'(MultiTaskLoss)
+#}
+
 MULTITASK_CONFIG = {
-    'firms_weight': 1,           # Loss weight for FIRMS prediction. Typical loss combination (other drivers loss*weight): FIRMS loss: 0.3112890124320984, Other drivers loss: 0.0020517727825790644
-    'other_drivers_weight': 1.0,   # Loss weight for other drivers prediction
-    'ignore_zero_values': True,    # Whether to ignore zero values in other drivers
-    'loss_function': 'mse',       # Loss function type: 'huber', 'mse', 'mae'
-    'loss_type': 'focal'          # Loss type selection: 'focal'(MultiTaskFocalLoss), 'kldiv'(MultiTaskKLDivLoss), or 'multitask'(MultiTaskLoss)
+    'firms_weight': 1.0,             # Loss weight for FIRMS prediction
+    'other_drivers_weight': 0.001,     # Loss weight for other drivers prediction
+    'ignore_zero_values': True,      # Whether to ignore zero values in other drivers
+    'loss_function': 'mse',          # Regression loss type: 'huber', 'mse', 'mae'
+    'loss_type': 'focal_arctan',     # Loss type: 'focal', 'focal_arctan', 'kldiv', 'multitask'
+
+    # ArcTan loss parameters (defaults from paper)
+    'arctan_a': 0.6,
+    'arctan_k': 0.8,
+    'arctan_alpha': 0.1,
+    'arctan_beta': 0.1,
+    'arctan_gamma': 0.01
 }
 
 # Dataset year configuration
@@ -64,7 +80,8 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_focal_withRegressionLoss_experiments'
+#STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_focal_withRegressionLoss_experiments'
+STANDARD_MODEL_DIR = '/mnt/raid/mabel/pths/baseline_focal_arctanloss_w_TimeXer_w_FreqMoE'
 
 def print_config_status():
     """Print current configuration status"""
@@ -846,6 +863,13 @@ class Config:
         self.ignore_zero_values = MULTITASK_CONFIG['ignore_zero_values']
         self.loss_function = MULTITASK_CONFIG['loss_function']
         self.loss_type = MULTITASK_CONFIG['loss_type']  # New: Loss function type selection
+
+        # 🔥 ArcTanLoss parameters (with defaults if not set in MULTITASK_CONFIG)
+        self.arctan_a = float(MULTITASK_CONFIG.get('arctan_a', 1.1))
+        self.arctan_k = float(MULTITASK_CONFIG.get('arctan_k', 1.3))
+        self.arctan_alpha = float(MULTITASK_CONFIG.get('arctan_alpha', 0.5))
+        self.arctan_beta = float(MULTITASK_CONFIG.get('arctan_beta', 0.5))
+        self.arctan_gamma = float(MULTITASK_CONFIG.get('arctan_gamma', 0.05))
         
         # Dataset split
         self.train_years = DATA_CONFIG['train_years']
@@ -1031,6 +1055,93 @@ class MultiTaskFocalLoss(nn.Module):
         }
         # print(firms_loss, other_loss)
         return total_loss, loss_components  # total_loss, loss_components
+
+
+class MultiTaskFocalArcTanLoss(nn.Module):
+    def __init__(self, firms_weight=1.0, other_drivers_weight=0.1, 
+                 focal_alpha=0.25, focal_gamma=2.0,
+                 ignore_zero_values=True, regression_loss='mse',
+                 use_arctan=False, a=1.1, k=1.3, alpha=0.5, beta=0.5, gamma=0.05):
+        super(MultiTaskFocalArcTanLoss, self).__init__()
+        self.firms_weight = firms_weight
+        self.other_drivers_weight = other_drivers_weight
+        self.ignore_zero_values = ignore_zero_values
+        self.use_arctan = use_arctan
+
+        # FIRMS classification loss
+        self.focal_loss = nn.BCELoss()
+
+        # Regression loss function for other drivers
+        if regression_loss == 'huber':
+            self.regression_loss_fn = nn.HuberLoss(reduction='none')
+        elif regression_loss == 'mse':
+            self.regression_loss_fn = nn.MSELoss(reduction='none')
+        elif regression_loss == 'mae':
+            self.regression_loss_fn = nn.L1Loss(reduction='none')
+        else:
+            raise ValueError(f"Unsupported regression loss function: {regression_loss}")
+
+        # ArcTan parameters
+        self.a, self.k, self.alpha, self.beta, self.gamma = a, k, alpha, beta, gamma
+        self.regression_loss_type = regression_loss
+
+    def forward(self, predictions, targets):
+        batch_size, seq_len, pred_channels = predictions.shape
+        _, _, target_channels = targets.shape
+
+        if pred_channels > target_channels:
+            predictions = predictions[:, :, :target_channels]
+
+        # Split FIRMS and other drivers
+        firms_pred = predictions[:, :, 0]      # (B, T)
+        firms_target = targets[:, :, 0]
+        other_pred = predictions[:, :, 1:]     # (B, T, 38)
+        other_target = targets[:, :, 1:]
+
+        # --- 1. FIRMS loss ---
+        firms_binary_target = (firms_target > 0).float()
+        firms_pred = torch.sigmoid(firms_pred)
+        firms_loss = self.focal_loss(firms_pred, firms_binary_target) * self.firms_weight
+
+        # --- 2. Regression loss ---
+        if self.use_arctan:
+            error = other_target - other_pred
+            arctan_term = - (self.a / (2 * self.k)) * torch.log(self.k**2 * error**2 + 1) \
+                          + self.a * error * torch.atan(self.k * error)
+            mae_term = torch.abs(error)
+            pred_penalty = torch.abs(other_pred)**2
+            other_loss = self.alpha * arctan_term + self.beta * mae_term + self.gamma * pred_penalty
+        else:
+            other_loss = self.regression_loss_fn(other_pred, other_target)
+
+        # Handle ignore_zero_values
+        if self.ignore_zero_values:
+            non_zero_mask = (other_target != 0.0).float()
+            valid_samples = non_zero_mask.sum()
+            if valid_samples > 0:
+                masked_loss = other_loss * non_zero_mask
+                other_loss = masked_loss.sum() / valid_samples
+            else:
+                other_loss = torch.tensor(0.0, device=predictions.device)
+        else:
+            other_loss = other_loss.mean()
+
+        other_loss = other_loss * self.other_drivers_weight
+
+        # --- 3. Total ---
+        total_loss = firms_loss + other_loss
+
+        loss_components = {
+            'total_loss': total_loss.item(),
+            'firms_loss': firms_loss.item(),
+            'other_drivers_loss': other_loss.item(),
+            'firms_weight': self.firms_weight,
+            'other_drivers_weight': self.other_drivers_weight,
+            'regression_loss_type': 'arctan' if self.use_arctan else self.regression_loss_type,
+            'loss_type': 'focal+arctan' if self.use_arctan else 'focal'
+        }
+
+        return total_loss, loss_components
 
 class MultiTaskKLDivLoss(nn.Module):
     """
@@ -1587,6 +1698,30 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
         print(f"   FIRMS weight: {config.firms_weight}, other drivers weight: {config.other_drivers_weight}")
         print(f"   Focal α: {config.focal_alpha}, Focal γ: {config.focal_gamma}")
         print(f"   Regression loss: {config.loss_function}, Ignore zero values: {config.ignore_zero_values}")
+
+    elif config.loss_type == 'focal_arctan':
+        # Use multi-task Focal + ArcTan Loss (for regression drivers)
+        criterion = MultiTaskFocalArcTanLoss(
+            firms_weight=config.firms_weight,
+            other_drivers_weight=config.other_drivers_weight,
+            focal_alpha=config.focal_alpha,
+            focal_gamma=config.focal_gamma,
+            ignore_zero_values=config.ignore_zero_values,
+            regression_loss=config.loss_function,  # still available but overridden if use_arctan=True
+            use_arctan=True,
+            a=config.arctan_a,
+            k=config.arctan_k,
+            alpha=config.arctan_alpha,
+            beta=config.arctan_beta,
+            gamma=config.arctan_gamma
+        )
+
+        print(f"🔍 Multi-task Focal + ArcTan Loss configuration:")
+        print(f"   FIRMS weight: {config.firms_weight}, other drivers weight: {config.other_drivers_weight}")
+        print(f"   Focal α: {config.focal_alpha}, Focal γ: {config.focal_gamma}")
+        print(f"   ArcTan parameters: a={config.arctan_a}, k={config.arctan_k}, "
+            f"α={config.arctan_alpha}, β={config.arctan_beta}, γ={config.arctan_gamma}")
+        print(f"   Ignore zero values: {config.ignore_zero_values}")
         
     elif config.loss_type == 'kldiv':
         # Use multi-task KL divergence Loss
@@ -1693,6 +1828,7 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
             # Only binaryize FIRMS channel, keep other channels as is
             # target_all_channels = target_all_channels.clone()
             # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float()
+            #pdb.set_trace()
             loss, loss_components = criterion(output, target_all_channels)
             # print(f"FIRMS loss: {loss_components['firms_loss']}, Other drivers loss: {loss_components['other_drivers_loss']}")
             optimizer.zero_grad()
@@ -1901,6 +2037,30 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
         print(f"   FIRMS weight: {config.firms_weight}, other drivers weight: {config.other_drivers_weight}")
         print(f"   Focal α: {config.focal_alpha}, Focal γ: {config.focal_gamma}")
         print(f"   Regression loss: {config.loss_function}, Ignore zero values: {config.ignore_zero_values}")
+
+    elif config.loss_type == 'focal_arctan':
+        # Use multi-task Focal + ArcTan Loss (for regression drivers)
+        criterion = MultiTaskFocalArcTanLoss(
+            firms_weight=config.firms_weight,
+            other_drivers_weight=config.other_drivers_weight,
+            focal_alpha=config.focal_alpha,
+            focal_gamma=config.focal_gamma,
+            ignore_zero_values=config.ignore_zero_values,
+            regression_loss=config.loss_function,  # still available but overridden if use_arctan=True
+            use_arctan=True,
+            a=config.arctan_a,
+            k=config.arctan_k,
+            alpha=config.arctan_alpha,
+            beta=config.arctan_beta,
+            gamma=config.arctan_gamma
+        )
+
+        print(f"🔍 Multi-task Focal + ArcTan Loss configuration:")
+        print(f"   FIRMS weight: {config.firms_weight}, other drivers weight: {config.other_drivers_weight}")
+        print(f"   Focal α: {config.focal_alpha}, Focal γ: {config.focal_gamma}")
+        print(f"   ArcTan parameters: a={config.arctan_a}, k={config.arctan_k}, "
+            f"α={config.arctan_alpha}, β={config.arctan_beta}, γ={config.arctan_gamma}")
+        print(f"   Ignore zero values: {config.ignore_zero_values}")
         
     elif config.loss_type == 'kldiv':
         # Create multi-task KL divergence loss function for testing
