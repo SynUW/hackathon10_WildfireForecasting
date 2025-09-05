@@ -108,7 +108,7 @@ config.yaml
 # 图像文件（如果很大的话）
 *.tif
 *.tiff
-*.png
+#*.png
 *.jpg
 *.jpeg
 
