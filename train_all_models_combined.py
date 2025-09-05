@@ -1575,6 +1575,9 @@ def train_single_model(model_name, device, train_loader, val_loader, test_loader
     # Use unified adapter
     from model_adapter_unified import UnifiedModelAdapter
     adapter = UnifiedModelAdapter(config)
+    print("Config values:")
+    for k, v in config.__dict__.items():
+        print(f"  {k}: {v}")
     
     try:
         model, _ = load_model(model_name, config, model_type)

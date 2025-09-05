@@ -280,15 +280,16 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
     
     # Standard model configurations
     base_config = {
-        'seq_len': 15,
-        'pred_len': 7,
+        'seq_len': 365, # 15
+        'pred_len': 1, # 7
         'label_len': 0,  # Default to 0, specific models will override
-        'd_model': 1024, # 1024,
-        'n_heads': 16,
-        'd_ff': 1024,
-        'e_layers': 2,
-        'd_layers': 2,
-        'dropout': 0.1,
+        # Model capacity - increased for complex wildfire patterns
+        'd_model': 512, # 1024,
+        'n_heads': 8, # 16
+        'd_ff': 2048, # 1024
+        'e_layers': 4, # 2
+        'd_layers': 2, # 2
+        'dropout': 0.2, # 0.1
         'activation': 'gelu',
         'output_attention': False,
         'enc_in': 39,  # Input feature dimension, changed to 39 for consistency
@@ -300,7 +301,7 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
         'moving_avg': 25,  # For Autoformer
         'channel_independence': False,
         'use_norm': True,
-        'd_state': 16,       # For Mamba-related models
+        'd_state': 32,       # original value = 16 For Mamba-related models
         'd_conv': 4,         # For Mamba-related models
         'expand': 2,         # For Mamba-related models
         'distil': True,      # For Informer
@@ -326,9 +327,9 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
         'iFlashformer': {'class_strategy': 'projection'},
         # s_mamba's special configuration
         's_mamba': {
-            'd_model': 1024,
-            'd_ff': 2048,
-            'e_layers': 2,
+            'd_model': 512, #1024
+            'd_ff': 1024, # 2048
+            'e_layers': 3, # 2
             'activation': 'gelu',
             'use_norm': True,
             'embed': 'timeF',
