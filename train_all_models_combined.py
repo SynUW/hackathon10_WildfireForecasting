@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_focal_withRegressionLoss_experiments'
+STANDARD_MODEL_DIR = '/home/saeidtaleg/hackathon10_WildfireForecasting/results/365to1_focal_withRegressionLoss_experiments'
 
 def print_config_status():
     """Print current configuration status"""
@@ -183,6 +183,10 @@ def get_all_models(model_zoo_path):
 
 # Get standard model list
 MODEL_LIST_STANDARD = get_all_models('model_zoo')
+# Add FLDmamba to the standard model list if it's not already included
+if 'FLDmamba' not in MODEL_LIST_STANDARD:
+    MODEL_LIST_STANDARD.append('FLDmamba')
+    MODEL_LIST_STANDARD.sort()  # Keep the list sorted
 
 print(f"Found standard models: {MODEL_LIST_STANDARD}")
 
@@ -574,16 +578,16 @@ def normalize_batch(past, future, firms_normalizer=None, metadata_list=None):
 def load_model(model_name, configs, model_type='standard'):
     """Load model dynamically (using model_zoo)"""
     try:
-        # Check for special dependencies
-        if model_name in ['Mamba', 'Reformer', 'Transformer', 'iTransformer', 's_mamba']:
+        # Check for special dependencies first
+        if model_name in ['Mamba', 'Reformer', 'Transformer', 'iTransformer', 's_mamba', 'FLDmamba']:
             try:
                 import mamba_ssm
             except ImportError:
                 print(f"⚠️ Model {model_name} requires mamba_ssm library")
-                print(f"💡 Suggest using mamba_env environment: conda activate mamba_env")
+                print(f" Suggest using mamba_env environment: conda activate mamba_env")
                 raise ImportError(f"Model {model_name} requires mamba_ssm library, please run in mamba_env environment")
         
-        # Use model_zoo uniformly
+        # Use model_zoo uniformly (including FLDmamba)
         model_zoo_path = os.path.join(os.getcwd(), 'model_zoo')
         module_name = f'model_zoo.{model_name}'
         
@@ -591,7 +595,7 @@ def load_model(model_name, configs, model_type='standard'):
             sys.path.insert(0, model_zoo_path)
         
         module = importlib.import_module(module_name)
-        Model = getattr(module, 'Model')
+        Model = getattr(module, 'Model')  # All models in model_zoo use 'Model' class name
         
         return Model(configs), model_type
     except Exception as e:
@@ -751,6 +755,10 @@ class Config:
         self.eta_min = float(config['eta_min'])
         self.max_grad_norm = float(config['max_grad_norm'])
         
+        # Add FLDmamba-specific parameters with default values
+        self.base = 0  # Base for RBF functions
+        self.i_or_cos = 0  # 0: cosine, 1: complex exponential, 2: simple projection
+        
         # Sequence parameters - ensure they are integers, avoiding Config object issues
         self.seq_len = int(TRAINING_CONFIG['seq_len'])
         self.pred_len = int(TRAINING_CONFIG['pred_len'])
@@ -828,6 +836,15 @@ class Config:
         elif model_name == 'Mamba':
             # Special parameters for Mamba are already set in the base configuration
             pass
+
+        # FLDmamba specific configuration override
+        elif model_name == 'FLDmamba':
+            # Use FLDmamba's preferred settings from your WildfireConfigs
+            self.d_model = 512  # Increased model dimension for complexity
+            self.d_state = 32   # Increased state dimension
+            self.e_layers = 6   # More layers for better feature extraction
+            self.base = 2       # Base for RBF functions
+            self.i_or_cos = 0   # Use cosine reconstruction for seasonal patterns
         
         # FIRMS data normalization parameters
         self.normalize_firms = True

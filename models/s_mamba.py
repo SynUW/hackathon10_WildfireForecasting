@@ -19,10 +19,21 @@ import numpy as np
 
 from mamba_ssm import Mamba
 
+# original values  are written in front og each parameter
 class Configs:
-    def __init__(self, seq_len=10, pred_len=7, d_model=256, d_state=256, d_ff=2048, 
-                 e_layers=5, dropout=0.1, activation='relu', output_attention=False,
-                 use_norm=False, embed='timeF', freq='d'):
+    def __init__(self, 
+                 seq_len=10, 
+                 pred_len=7, 
+                 d_model=256, 
+                 d_state=256, 
+                 d_ff=2048, 
+                 e_layers=5, 
+                 dropout=0.1, 
+                 activation='relu', 
+                 output_attention=False,
+                 use_norm=False, 
+                 embed='timeF', 
+                 freq='d'):
         # Model basic parameters
         self.seq_len = seq_len  # Input sequence length
         self.pred_len = pred_len  # Prediction length
@@ -54,7 +65,7 @@ class Model(nn.Module):
         self.use_norm = configs.use_norm
         # Embedding - first parameter should be sequence length
         self.enc_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, configs.embed, configs.freq,
-                                                    configs.dropout)
+                                                    configs.dropout) # convert nn.Linear(c_in, d_model)
         # Encoder-only architecture
         self.encoder = Encoder(
             [
@@ -190,12 +201,14 @@ class Model(nn.Module):
 if __name__ == '__main__':
     configs = Configs(
     seq_len=10,
-    pred_len=7,
-    d_model=39,
-    d_state=16,
+    pred_len=1, # 7
+    d_model=64, # 39
+    d_state=64, # 16
     d_ff=256,
-    e_layers=2,
-    dropout=0.1,
+    e_layers=3, #3
+    dropout=0.2, # 0.1
+    activation = 'silu',
+    use_norm = True
 )
     # Create model and move to GPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

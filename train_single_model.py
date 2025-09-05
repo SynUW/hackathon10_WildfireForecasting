@@ -24,10 +24,19 @@ import torch
 import pandas as pd
 from datetime import datetime
 
+# added by Saeid
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+try:
+    from model_zoo.FLDmamba  import FLDMamba, WildfireConfigs
+    print("✅ FLDmamba model loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Could not import FLDmamba: {e}")
+
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Single model training script')
-    parser.add_argument('--model', type=str, required=True, help='Model name, s_mamba, s_mamba_full, ...')
+    parser.add_argument('--model', type=str, required=True, default= 's_mamba', help='Model name, s_mamba, s_mamba_full, ...')
     parser.add_argument('--type', type=str, default='standard', choices=['standard'], help='Model type')
     parser.add_argument('--gpu', type=int, default=1, help='GPU device number')
     parser.add_argument('--log-dir', type=str, default='./trash/smart_parallel_logs_single_model', help='Log directory')
