@@ -283,7 +283,7 @@ def get_unified_model_configs(model_name=None, model_type='standard'):
         'seq_len': 15,
         'pred_len': 7,
         'label_len': 0,  # Default to 0, specific models will override
-        'd_model': 1024, # 1024,
+        'd_model': 1024, # 1024, 1456
         'n_heads': 16,
         'd_ff': 1024,
         'e_layers': 2,

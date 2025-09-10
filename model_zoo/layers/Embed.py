@@ -189,13 +189,117 @@ class DataEmbedding_inverted(nn.Module):
 
         # x: [Batch Variate Time]
         if x_mark is None:
-
             x = self.value_embedding(x)
         else:
             # [B, N, L] -> [B, N+7, D] time_feat_dim=7 and each variable is embedded to a token
             x = self.value_embedding(torch.cat([x, x_mark.permute(0, 2, 1)], 1))
             # x = torch.cat([x, x_mark.permute(0, 2, 1)], dim=1)
         return x # self.dropout(x)
+    
+
+class DataEmbedding_inverted_tokenlize(nn.Module):
+    """
+    输入:
+      x:      [B, L, N]               # 数值
+      x_mark: [B, L, F]               # 时间特征 (例如 7)
+    输出:
+      x_tok:  [B, N, T, d_model]      # token 后的特征
+      m_tok:  [B, N, T] (bool)        # 对应的有效掩码
+    """
+    def __init__(self, c_in, d_model, time_feat_dim=7, win=7, step=7, dropout=0.1):
+        super().__init__()
+        assert win >= 1 and step >= 1
+        self.win = win
+        self.step = step
+        self.time_feat_dim = time_feat_dim
+        d_model = 128
+
+        # 块内位置编码（0..win-1）
+        self.pos_emb = nn.Embedding(win, time_feat_dim)
+
+        # 每个 token 的输入维: (win * (1 + time_feat_dim))
+        in_dim = win * (1 + time_feat_dim)
+        hid = max(64, d_model // 2)
+        self.proj = nn.Sequential(
+            nn.Linear(in_dim, hid),
+            nn.GELU(),
+            nn.Linear(hid, d_model),
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def _pad_to_fit(self, x, L_pad):
+        # 右侧补齐 zeros（或可用均值），保形状
+        if L_pad > 0:
+            pad = torch.zeros(*x.shape[:-2], L_pad, x.shape[-1], device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad], dim=-2)
+        return x
+
+    def forward(self, x, x_mark, missing_mask: Optional[torch.Tensor]=None):
+        # x: [B,L,N], x_mark: [B,L,F]
+        B, L, N = x.shape
+        F = x_mark.shape[-1] if x_mark is not None else 0
+        assert (x_mark is None) or (F == self.time_feat_dim), "time_feat_dim 不匹配"
+
+        # 计算 unfold 次数并补齐
+        # T = 1 + floor((L - win)/step)，使得 (T-1)*step + win <= L_pad
+        if L < self.win:
+            T = 1
+            L_needed = self.win
+        else:
+            T = 1 + (L - self.win + self.step - 1) // self.step  # ceil floor 兼容
+            L_needed = (T - 1) * self.step + self.win
+
+        L_pad = max(0, L_needed - L)
+        # 补齐 x 与 x_mark
+        x = self._pad_to_fit(x, L_pad)                    # [B, L_pad, N]
+        if x_mark is not None:
+            x_mark = self._pad_to_fit(x_mark, L_pad)      # [B, L_pad, F]
+        if missing_mask is not None:
+            missing_mask = self._pad_to_fit(missing_mask, L_pad)  # [B, L_pad, N] (0/1)
+
+        # 转成 [B,N,L_pad]
+        x = x.permute(0,2,1)                              # [B,N,Lp]
+        if missing_mask is not None:
+            m = missing_mask.permute(0,2,1)               # [B,N,Lp]
+        else:
+            m = torch.ones(B, N, x.shape[-1], device=x.device, dtype=x.dtype)
+
+        # unfold 成块: [B,N,T,win]
+        x_blk = x.unfold(dimension=-1, size=self.win, step=self.step)    # [B,N,T,win]
+        m_blk = m.unfold(dimension=-1, size=self.win, step=self.step)    # [B,N,T,win]
+        T_actual = x_blk.shape[2]
+
+        # 时间特征与块内位置（不把 time 特征当变量）
+        if x_mark is not None:
+            # [B,Lp,F] -> [B,T,win,F]
+            xm = x_mark.unfold(dimension=1, size=self.win, step=self.step)  # 维度是 dim=1 因为 [B,Lp,F]
+            # 规范：x_mark 原来 [B,L,F]，这里需要先 permute 成 [B,F,L] 再 unfold，或更直接：
+            # 改为：x_mark.permute(0,2,1).unfold(-1, win, step) -> [B,F,T,win]
+            xm = x_mark.permute(0,2,1).unfold(dimension=-1, size=self.win, step=self.step)  # [B,F,T,win]
+            xm = xm.permute(0,2,3,1)                                   # [B,T,win,F]
+        else:
+            xm = torch.zeros(B, T_actual, self.win, self.time_feat_dim, device=x.device, dtype=x.dtype)
+
+        # 块内位置编码
+        pos = torch.arange(self.win, device=x.device).unsqueeze(0).unsqueeze(0)  # [1,1,win]
+        pos = self.pos_emb(pos.expand(B, T_actual, -1))                          # [B,T,win,F]
+
+        # 组合成 token 输入：每个 token = concat( x_blk[b,n,t,:] , (xm+pos)[b,t,:,:] )
+        # x_blk: [B,N,T,win] -> [B,N,T,win,1]
+        x_blk_e = x_blk.unsqueeze(-1)
+        # time part: [B,T,win,F] -> [B,1,T,win,F] -> broadcast 到 [B,N,T,win,F]
+        tp = (xm + pos).unsqueeze(1).expand(B, N, T_actual, self.win, self.time_feat_dim)
+
+        token_in = torch.cat([x_blk_e, tp], dim=-1)           # [B,N,T,win*(1+F)] (先不展平最后一维)
+        token_in = token_in.reshape(B, N, T_actual, -1)        # [B,N,T,in_dim]
+
+        # 线性映射到 d_model
+        x_tok = self.proj(token_in)                            # [B,N,T,d_model]
+
+        # token mask：窗口内“任一有效→有效”
+        m_tok = (m_blk.max(dim=-1).values > 0.0)               # [B,N,T] (bool)
+        return self.dropout(x_tok), m_tok
+
   
 # 这个embedding似乎有逻辑错误。对于x_mark，不应该将时间特征数量映射到d_model，而是应该将时间序列映射到d_model
 # 也就是用时间特征生成一个全局的（对所有变量共享的）时间摘要，在“变量作为 token”的空间里去调制每个变量的 token

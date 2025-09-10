@@ -1,6 +1,7 @@
 """
 Is Mamba Effective for Time Series Forecasting?
 """
+from re import X
 import torch
 import torch.nn as nn
 import os
@@ -343,25 +344,41 @@ class Model(nn.Module):
         x_mark_enc: [B, L, time_features]
         """
         B, L, N = x_enc.shape
-        # MODIS channels start at index 21 (if present)
+        
+        if 1 == 1:            
+            x_before_fill = x_enc.clone()
+            x_enc = self._fill_missing_nearest_mean(x_enc, invalid_value=-9999, zero_invalid_from_feature_idx=21)
+            # 2) 平滑：Hampel → Savitzky–Golay，既去尖刺又保留拐点
+            x_before_smooth = x_enc.clone()
+            x_enc = self._smooth_hampel_sg(
+                x_enc,
+                window_length=21,  # 21  # 日尺度：建议21–31
+                polyorder=3,
+                hampel_window=7,
+                hampel_nsig=3.0, # 3.0 
+            )
+            x_enc[:, :, 0] = x_before_smooth[:, :, 0]
+            
+            # 4) 对第一个变量（此处按 x_enc[:, :, 0]）进行高斯扩散，将稀疏事件转为高斯分布
+            x_before_gaussian = x_enc.clone()
+            x_firms = x_enc[:, :, 0]  # [B, L]
+            x_firms_diffused = self._gaussian_diffuse_1d(x_firms, sigma=7.0)
+            x_enc[:, :, 0] = x_firms_diffused
+            
+            # --- Split endogenous (Q) vs exogenous (K,V) ---
+            endo = x_enc[:, :, 0:1]      # FIRMS or first channel
+            exo  = x_enc[:, :, 1:] if N > 1 else None
 
-        # Replace -9999 with 0
-        x_enc = torch.where(x_enc == -9999, torch.full_like(x_enc, 0.5), x_enc)
+            # Embeddings
+            enc_endo = self.enc_embedding(endo, x_mark_enc)   # [B, N_endo, D]
+            enc_exo  = self.enc_embedding(exo, x_mark_enc) if exo is not None else None
 
-        # --- Split endogenous (Q) vs exogenous (K,V) ---
-        endo = x_enc[:, :, 0:1]      # FIRMS or first channel
-        exo  = x_enc[:, :, 1:] if N > 1 else None
-
-        # Embeddings
-        enc_endo = self.enc_embedding(endo, x_mark_enc)   # [B, N_endo, D]
-        enc_exo  = self.enc_embedding(exo, x_mark_enc) if exo is not None else None
-
-        # --- Cross Attention ---
-        if enc_exo is not None:
+            # --- Cross Attention ---
             enc_endo = self.cross_attn(enc_endo, enc_exo)  # [B, N_endo, D]
-
-        # --- Pass through Mamba encoder ---
-        print(f"enc_endo shape: {enc_endo.shape}")
+        else:
+            x_enc = torch.where(x_enc == -9999, torch.full_like(x_enc, 0.5), x_enc)
+            # --- Pass through Mamba encoder ---
+            enc_endo = self.enc_embedding(x_enc, x_mark_enc)   # [B, N_endo, D]
         enc_out, attns = self.encoder(enc_endo, attn_mask=None)
 
         # --- Project back to predictions ---
@@ -373,11 +390,205 @@ class Model(nn.Module):
         return dec_out
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-        print(f"x_enc shape: {x_enc.shape}")
-        print(f"x_mark_enc shape: {x_mark_enc.shape}")
 
         dec_out = self.forecast(x_enc, x_mark_enc)
         return dec_out[:, -self.pred_len:, :]  # [B, L, N]
+    
+    @staticmethod
+    def _fill_missing_nearest_mean(x: torch.Tensor, invalid_value: float = -9999,
+                                   zero_invalid_from_feature_idx: int = 21,
+                                   zero_tol: float = 1e-8) -> torch.Tensor:
+        """
+        最近邻插值：对每个像素时间序列（按最后一维为变量，中间为时间）用最近的左右有效值的均值填补缺失。
+        规则：
+          - 同时存在前后最近有效值 -> 取均值
+          - 仅一侧存在 -> 取该侧值
+          - 两侧都不存在（全缺失）-> 置0
+        输入: x [B, L, N]
+        输出: 同形状张量
+        """
+        B, L, N = x.shape
+        device = x.device
+        dtype = x.dtype
+
+        # [B,N,L]
+        x_bnl = x.permute(0, 2, 1)
+        # 对于特征索引 >= zero_invalid_from_feature_idx，将 |x|<zero_tol 视为无效
+        var_idx = torch.arange(N, device=device).view(1, N, 1)  # [1,N,1]
+        zero_invalid_mask = (var_idx >= zero_invalid_from_feature_idx)
+        is_zero_invalid = (x_bnl.abs() < zero_tol) & zero_invalid_mask
+        valid = (x_bnl != invalid_value) & (~is_zero_invalid)
+
+        # 前向最近有效索引（<= t）
+        t_idx = torch.arange(L, device=device).view(1, 1, L).expand(B, N, L)
+        prev_idx = torch.where(valid, t_idx, torch.full_like(t_idx, -1))
+        prev_idx = torch.cummax(prev_idx, dim=2).values  # [B,N,L] 每时刻最近的左侧有效位置（含自身）
+        prev_exists = prev_idx >= 0
+        prev_idx_safe = torch.clamp(prev_idx, min=0)
+        prev_vals = torch.gather(x_bnl, 2, prev_idx_safe)
+
+        # 后向最近有效索引（>= t）：在反向序列上做cummax再映回
+        x_rev_valid = valid.flip(dims=[2])
+        t_rev = torch.arange(L, device=device).view(1, 1, L).expand(B, N, L)
+        next_rev_idx = torch.where(x_rev_valid, t_rev, torch.full_like(t_rev, -1))
+        next_rev_idx = torch.cummax(next_rev_idx, dim=2).values  # 反向的“最近左侧”
+        next_exists = next_rev_idx >= 0
+        # 映射回正向索引：idx_fwd = L-1 - idx_rev
+        next_idx = (L - 1) - next_rev_idx
+        next_idx_safe = torch.where(next_exists, next_idx, torch.zeros_like(next_idx))
+        next_vals = torch.gather(x_bnl, 2, next_idx_safe)
+
+        # 计算每个样本-特征的全局中位数（忽略无效）作为兜底
+        nan = torch.tensor(float('nan'), device=device, dtype=dtype)
+        vals_masked = torch.where(valid, x_bnl, nan)
+        # torch.nanmedian 返回 (values, indices)
+        feat_median = torch.nanmedian(vals_masked, dim=2).values  # [B,N]
+        # 若全为 NaN，则用0回退
+        feat_median = torch.where(torch.isnan(feat_median), torch.zeros_like(feat_median), feat_median)
+        feat_median_exp = feat_median.unsqueeze(-1).expand(B, N, L)
+
+        # 组合填充值：
+        # - 两侧都有 -> 均值
+        # - 仅一侧 -> 该侧
+        # - 两侧都无 -> 全局中位数
+        both = prev_exists & next_exists
+        neither = (~prev_exists) & (~next_exists)
+        fill_vals = torch.where(both, 0.5 * (prev_vals + next_vals), prev_vals)
+        fill_vals = torch.where((~both) & next_exists, next_vals, fill_vals)
+        fill_vals = torch.where(neither, feat_median_exp, fill_vals)
+
+        # 写回缺失位置
+        x_filled = torch.where(valid, x_bnl, fill_vals)
+        return x_filled.permute(0, 2, 1)
+
+    @staticmethod
+    def _smooth_hampel_sg(x: torch.Tensor,
+                      window_length: int = 21,
+                      polyorder: int = 3,
+                      hampel_window: int = 7,
+                      hampel_nsig: float = 3.0) -> torch.Tensor:
+        """
+        先做 Hampel 去尖刺，再做 Savitzky–Golay 平滑（GPU 友好，torch 实现）
+        x: [B, L, N]  ->  返回同形状 [B, L, N]（保持 device/dtype）
+        注意：SG 这里用 reflect 边界填充，避免零填充带来的首尾偏移。
+        """
+        if x.ndim != 3:
+            raise ValueError("x must be [B, L, N]")
+        B, L, N = x.shape
+        if L <= 2:
+            return x
+
+        device, dtype = x.device, x.dtype
+
+        # ---- helpers ----
+        def _odd_within(v: int, max_len: int) -> int:
+            """确保奇数，且不超过序列长度（至少为3）"""
+            v = int(v)
+            if v % 2 == 0:
+                v += 1
+            v = min(v, max_len if (max_len % 2 == 1) else max_len - 1)
+            return max(3, v)
+
+        # ----------------- 参数整理 -----------------
+        wl   = _odd_within(window_length, L)
+        poly = max(1, min(int(polyorder), wl - 1))
+        hw   = max(1, int(hampel_window))
+        nsig = float(hampel_nsig)
+
+        # ----------------- 1) Hampel 去尖刺 -----------------
+        # 到 [B, N, L]
+        x_bnl = x.permute(0, 2, 1).contiguous()  # [B,N,L]
+
+        win = hw * 2 + 1
+        if win > L:
+            win = _odd_within(win, L)
+
+        # 边缘复制填充，再滑窗
+        x_pad = F.pad(x_bnl, (hw, hw), mode='replicate')        # [B,N,L+2*hw]
+        x_win = x_pad.unfold(dimension=2, size=win, step=1)     # [B,N,L,win]
+
+        med = x_win.median(dim=-1).values                       # [B,N,L]
+        mad = (x_win - med.unsqueeze(-1)).abs().median(dim=-1).values  # [B,N,L]
+        thr = 1.4826 * mad * nsig
+        outlier = (x_bnl - med).abs() > thr
+        x_hampel = torch.where(outlier, med, x_bnl)             # [B,N,L]
+
+        # ----------------- 2) SG 平滑（反射填充 + depthwise conv） -----------------
+        half = wl // 2
+
+        # 设计矩阵 A 与中心权重 h（在 CPU 上一次性求）
+        # A: [wl, poly+1]，行是 -half..half 的幂
+        A = np.vander(np.arange(-half, half + 1, dtype=np.float64),
+                    N=poly + 1, increasing=True)              # [wl, poly+1]
+        H = A @ np.linalg.pinv(A)                                # [wl, wl]
+        h = H[half, :].astype(np.float32)                        # 中心行 -> 卷积核
+        h_t = torch.from_numpy(h).to(device=device, dtype=dtype) # [wl]
+
+        # depthwise kernel: [N,1,wl]
+        weight = h_t.view(1, 1, wl).repeat(N, 1, 1)
+
+        # 用 reflect 显式填充，再 conv1d（padding=0，避免 zero-pad 端点偏移）
+        x_reflect = F.pad(x_hampel, (half, half), mode='reflect')  # [B,N,L+2*half]
+        x_sg = F.conv1d(x_reflect.contiguous(), weight, bias=None,
+                        stride=1, padding=0, groups=N)             # [B,N,L]
+
+        # 回到 [B, L, N]
+        return x_sg.permute(0, 2, 1).contiguous()
+
+    @staticmethod
+    def _gaussian_diffuse_1d(
+        x_bL: torch.Tensor,
+        sigma: float = 3.0,
+        mode: str = "sum",          # "sum": 面积=1；"max": 峰值=1
+        padding: str = "reflect",   # "reflect" | "constant" | "replicate"
+        normalize_series: bool = False
+    ) -> torch.Tensor:
+        """
+        稀疏事件的一维高斯扩散（卷积）
+        x_bL: [B, L]，sigma 用“时间步”为单位
+        """
+        if sigma <= 0:
+            return x_bL
+
+        B, L = x_bL.shape
+        device, dtype = x_bL.device, x_bL.dtype
+
+        # ---- 核参数：半径≤L//2，长度为奇数 ----
+        radius = int(max(1, round(3.0 * float(sigma))))
+        radius = min(radius, max(1, L // 2))
+        k = 2 * radius + 1
+
+        t = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
+        kernel = torch.exp(-0.5 * (t / sigma) ** 2)
+
+        if mode == "sum":
+            # 面积守恒（单脉冲扩散后峰值 < 1，但总能量不变）
+            kernel = kernel / kernel.sum().clamp_min(1e-8)
+        elif mode == "max":
+            # 峰值守恒（单脉冲扩散后峰值 = 1，面积会随 sigma 变大）
+            kernel = kernel / kernel.max().clamp_min(1e-8)
+        else:
+            raise ValueError("mode must be 'sum' or 'max'")
+
+        x = x_bL.unsqueeze(1)                 # [B,1,L]
+        weight = kernel.view(1, 1, k)         # [1,1,K]
+
+        # 边界填充
+        if padding == "constant":
+            x_pad = F.pad(x, (radius, radius), mode="constant", value=0.0)
+        else:
+            x_pad = F.pad(x, (radius, radius), mode=padding)
+
+        y = F.conv1d(x_pad, weight)           # [B,1,L]
+        y = y.squeeze(1)                      # [B,L]
+
+        if normalize_series:
+            # 可选：对每条时间序列做 0-1 归一（只用于可视化）
+            y_min = y.amin(dim=1, keepdim=True)
+            y_max = y.amax(dim=1, keepdim=True)
+            y = (y - y_min) / (y_max - y_min).clamp_min(1e-8)
+
+        return y
     
     
 if __name__ == '__main__':

@@ -96,7 +96,10 @@ class Model(nn.Module):
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+            x_enc = torch.where(x_enc == -9999, torch.zeros_like(x_enc), x_enc)
+            # print(torch.max(x_enc), torch.min(x_enc))
             dec_out = self.forecast(x_enc)
+            print(torch.max(dec_out), torch.min(dec_out))
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
         if self.task_name == 'imputation':
             dec_out = self.imputation(x_enc)

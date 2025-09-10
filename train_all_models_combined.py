@@ -64,7 +64,7 @@ DEFAULT_TEST_YEARS = [2023, 2024]
 # Model directory configuration
 # target_all_channels = target_all_channels.clone()
 # target_all_channels[:, :, 0] = (target_all_channels[:, :, 0] > 10).float() Don't forget to remove these 2 lines
-STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/365to1_focal_withRegressionLoss_experiments'
+STANDARD_MODEL_DIR = '/mnt/raid/zhengsen/pths/hackathon11_pths_withoutThrmalFiltering'
 
 def print_config_status():
     """Print current configuration status"""
@@ -198,13 +198,13 @@ TRAINING_CONFIG = {
     
     # Standard model configuration
     'standard': {
-        'epochs': 10,
+        'epochs': 50,
         'batch_size': 128,
         'learning_rate': 5e-5,          # Lower learning rate
         'weight_decay': 1e-4,
         'T_0': 20,
         'T_mult': 2,
-        'eta_min':1e-5,
+        'eta_min':5e-5,
         'max_grad_norm': 0.0,           # Enable gradient clipping to prevent gradient explosion; 0.0 means no clipping
         'model_save_dir': STANDARD_MODEL_DIR,
     },
@@ -992,7 +992,7 @@ class MultiTaskFocalLoss(nn.Module):
         firms_loss = self.focal_loss(firms_pred, firms_binary_target) * self.firms_weight
         
         # 2. Calculate regression loss for other drivers
-        other_loss = self.regression_loss_fn(other_pred, other_target)  # (B, T, 38)
+        other_loss = 0 # self.regression_loss_fn(other_pred, other_target)  # (B, T, 38)
         
         if self.ignore_zero_values:
             # Create non-zero mask to ignore0 values
@@ -2028,7 +2028,7 @@ def test_model(model_name, model_path, device, test_loader, firms_normalizer, mo
     }
 
 def train_and_test_models(model_list, model_type, device, train_loader, val_loader, test_loader, firms_normalizer, force_retrain=False):
-    """Train and test a group of models"""
+    """Train and test a group of models""" 
     print(f"\n🔥 Starting training {model_type} model group")
     print(f"📋 Original model list: {len(model_list)} {model_type} models")
     print(f"📊 {model_type} model list: {', '.join(model_list)}")
@@ -2177,10 +2177,14 @@ def prepare_data_loaders():
         
         # with norm and right data
         # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/h5_dataset/all_data_masked_10x_without_qa_masked_clip_min_max_normalized',
+        # h5_dir = '/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/h5_dataset/all_data_masked_10x_without_qa_masked_clip_min_max_normalized_withoutThrmalFiltering',
+        
+        # hackathon data
         h5_dir = '/beluga/wildfire_prediction/all_data_masked_10x_without_qa_masked_clip_min_max_normalized',
+        
         # without downsampling withhout test seems not correct as it does not sample the data
         # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_undownsampled',
-
+                
         # with qa and different data format
         # h5_dir='/mnt/raid/zhengsen/wildfire_dataset/self_built_materials/all_data_masked_result_10x_QAapplied',
         

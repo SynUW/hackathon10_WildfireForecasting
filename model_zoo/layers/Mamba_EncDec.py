@@ -136,6 +136,77 @@ class EncoderLayer(nn.Module):
         return self.norm2(x + y), attn
 
 
+class EncoderLayer_tokenlize(nn.Module):
+    def __init__(self, attention, attention_r, d_model, d_ff=None, dropout=0.1, activation="relu"):
+        super(EncoderLayer_tokenlize, self).__init__()
+        d_ff = 6784 # d_ff or 4 * d_model
+        self.attention = attention
+        self.attention_r = attention_r
+                
+        self.conv1 = nn.Conv1d(in_channels=d_model, out_channels=d_ff, kernel_size=1)
+        self.conv2 = nn.Conv1d(in_channels=d_ff, out_channels=d_model, kernel_size=1)
+        self.norm1 = nn.LayerNorm(128)
+        self.norm2 = nn.LayerNorm(128*53)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = F.relu if activation == "relu" else F.gelu
+        
+        self.man = Mamba(
+            d_model=128,  # Model dimension should match number of features
+            d_state=16,  # SSM state expansion factor
+            d_conv=4,  # Local convolution width
+            expand=2,  # Block expansion factor)
+        )
+        self.man2 = Mamba(
+            d_model=128,  # Model dimension d_model
+            d_state=16,  # SSM state expansion factor
+            d_conv=4,  # Local convolution width
+            expand=2,  # Block expansion factor)
+        )
+        
+        self.man3 = Mamba(
+            d_model=128*53,  # Model dimension d_model
+            d_state=16,  # SSM state expansion factor
+            d_conv=4,  # Local convolution width
+            expand=2,  # Block expansion factor)
+        )
+        
+        self.man4 = Mamba(
+            d_model=128*53,  # Model dimension d_model
+            d_state=16,  # SSM state expansion factor
+            d_conv=4,  # Local convolution width
+            expand=2,  # Block expansion factor)
+        )
+        
+        self.a = AttentionLayer(
+                        FullAttention(False, 2, attention_dropout=0.1,
+                                      output_attention=True), d_model, 1)
+    def forward(self, x, attn_mask=None, tau=None, delta=None):
+        # x: [B, N, L, 28]
+        B, N, L, D = x.shape
+        x_temporal = x.reshape(x.shape[0]*x.shape[1], x.shape[2], x.shape[3])
+        new_x = self.man(x_temporal) + self.man2(x_temporal.flip(dims=[1])).flip(dims=[1])
+        # Temporal Mamba which is not used in the original paper
+        # new_x: [B, N, D] -> [B, D, N] -> Mamba -> [B, D, N] -> [B, N, D]
+        # new_x_transpose = new_x.transpose(-1, 1)
+        # new_x_transpose = self.man2(new_x_transpose.flip(dims=[1])).flip(dims=[1])
+        # new_x = new_x_transpose.transpose(-1, 1)
+        
+        attn = 1
+    
+        x = x + new_x.reshape(x.shape[0], x.shape[1], x.shape[2], x.shape[3])
+        y = x = self.norm1(x)
+        
+        x_variable = x.reshape(x.shape[0], x.shape[1], x.shape[2]*x.shape[3])
+        new_x_variable = self.man3(x_variable) + self.man4(x_variable.flip(dims=[1])).flip(dims=[1])
+        x_variable = x_variable + new_x_variable
+        y = x = self.norm2(x_variable)
+
+        # why transpose? B N L -> B L N -> B N L
+        y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+        y = self.dropout(self.conv2(y).transpose(-1, 1))
+
+        return self.norm2(x + y).reshape(B, N, L, D), attn
+
 class Encoder(nn.Module):
     def __init__(self, attn_layers, conv_layers=None, norm_layer=None):
         super(Encoder, self).__init__()
